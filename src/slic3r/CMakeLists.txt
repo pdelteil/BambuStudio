@@ -352,6 +352,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Overview/AssemblyStepsUtilsInternal.hpp
     GUI/CameraUtils.cpp
     GUI/CameraUtils.hpp
+    GUI/PrintCardUtils.cpp
+    GUI/PrintCardUtils.hpp
     GUI/wxExtensions.cpp
     GUI/wxExtensions.hpp
     GUI/ObjColorDialog.cpp

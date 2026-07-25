@@ -150,6 +150,7 @@
 #include "ParamsDialog.hpp"
 #include "ImageDPIFrame.hpp"
 #include "FilamentBitmapUtils.hpp"
+#include "PrintCardUtils.hpp"
 #include "Widgets/Label.hpp"
 #include "Widgets/RoundedRectangle.hpp"
 #include "Widgets/RadioBox.hpp"
@@ -21623,6 +21624,158 @@ void Plater::export_core_3mf()
     if (path.empty()) { return; }
     const std::string path_u8 = into_u8(path);
     export_3mf(path_u8, SaveStrategy::Silence);
+}
+
+void Plater::export_print_settings_pdf()
+{
+    PartPlateList &plate_list = get_partplate_list();
+    PartPlate     *plate      = plate_list.get_curr_plate();
+    if (!plate) {
+        MessageDialog(this, _L("There is no plate to export."), _L("Export print settings"),
+                      wxOK | wxICON_INFORMATION).ShowModal();
+        return;
+    }
+
+    // Merged configuration for the current preset selection.
+    const DynamicPrintConfig config = wxGetApp().preset_bundle->full_config();
+
+    GUI::PrintCardData card;
+
+    // --- Formatting helpers --------------------------------------------------
+    auto fmt = [](const char *f, double v) { char b[64]; snprintf(b, sizeof(b), f, v); return std::string(b); };
+    auto opt_present = [&config](const std::string &k) { return config.option(k) != nullptr; };
+    auto enum_label = [&config](const std::string &key, int idx) -> std::string {
+        const ConfigOptionDef *def = print_config_def.get(key);
+        if (def && idx >= 0 && idx < (int) def->enum_labels.size())
+            return def->enum_labels[idx];
+        return std::string();
+    };
+
+    // --- Identity ------------------------------------------------------------
+    card.title = into_u8(get_project_name());
+    card.date  = into_u8(wxDateTime::Now().FormatISODate());
+    PresetBundle *pb    = wxGetApp().preset_bundle;
+    card.printer_preset = pb->printers.get_selected_preset_name();
+    card.process_preset = pb->prints.get_selected_preset_name();
+    // Join all extruder filament presets (dedup consecutive duplicates).
+    {
+        std::string joined;
+        for (const std::string &n : pb->filament_presets) {
+            if (n.empty()) continue;
+            if (joined.empty()) joined = n;
+            else if (joined.find(n) == std::string::npos) joined += ", " + n;
+        }
+        card.filament_preset = joined.empty() ? pb->filaments.get_selected_preset_name() : joined;
+    }
+    if (opt_present("nozzle_diameter"))
+        card.nozzle_diameter = fmt("%.1f mm", config.opt_float("nozzle_diameter", 0));
+    card.plate_index = plate_list.get_curr_plate_index() + 1;
+
+    // --- Settings ------------------------------------------------------------
+    if (opt_present("layer_height"))
+        card.layer_height = fmt("%.2f mm", config.opt_float("layer_height"));
+    if (opt_present("initial_layer_print_height"))
+        card.initial_layer_height = fmt("%.2f mm", config.opt_float("initial_layer_print_height"));
+    if (opt_present("wall_loops"))
+        card.wall_loops = std::to_string(config.opt_int("wall_loops"));
+    if (opt_present("sparse_infill_density"))
+        card.sparse_infill_density = fmt("%.0f %%", config.option("sparse_infill_density")->getFloat());
+    if (opt_present("sparse_infill_pattern"))
+        card.sparse_infill_pattern = enum_label("sparse_infill_pattern", config.option("sparse_infill_pattern")->getInt());
+
+    // Variable layer height: detected from per-object custom layering, not a config key.
+    {
+        bool   has_vlh = false;
+        double vmin = std::numeric_limits<double>::max(), vmax = 0.0;
+        for (const ModelObject *mo : model().objects) {
+            if (!mo || !mo->has_custom_layering())
+                continue;
+            has_vlh = true;
+            const std::vector<coordf_t> prof = mo->layer_height_profile.get();
+            // profile is [z0,h0,z1,h1,...]; heights are the odd indices.
+            for (size_t i = 1; i < prof.size(); i += 2) {
+                vmin = std::min(vmin, prof[i]);
+                vmax = std::max(vmax, prof[i]);
+            }
+        }
+        card.variable_layer_height = has_vlh;
+        if (has_vlh && vmax > 0.0 && vmin <= vmax)
+            card.variable_layer_height_range = fmt("%.2f", vmin) + " - " + fmt("%.2f mm", vmax);
+    }
+
+    // Ironing: enabled when ironing_type != "no ironing" (enum index 0).
+    if (opt_present("ironing_type")) {
+        const int iron = config.option("ironing_type")->getInt();
+        card.ironing = (iron != 0);
+        if (card.ironing) {
+            card.ironing_type = enum_label("ironing_type", iron);
+            if (opt_present("ironing_flow"))    card.ironing_flow    = fmt("%.0f %%", config.option("ironing_flow")->getFloat());
+            if (opt_present("ironing_spacing")) card.ironing_spacing = fmt("%.2f mm", config.opt_float("ironing_spacing"));
+            if (opt_present("ironing_speed"))   card.ironing_speed   = fmt("%.0f mm/s", config.opt_float("ironing_speed"));
+        }
+    }
+
+    // --- Results (available after slicing) -----------------------------------
+    if (const GCodeProcessorResult *gres = plate->get_slice_result();
+        gres != nullptr && !gres->print_statistics.modes.empty()) {
+        const float t = gres->print_statistics.modes[0].time;
+        if (t > 0.0f)
+            card.print_time = short_time(get_time_dhms(t));
+    }
+    try {
+        const PrintStatistics &ps = plate_list.get_current_fff_print().print_statistics();
+        if (ps.total_weight > 0.0)
+            card.filament_grams = fmt("%.2f g", ps.total_weight);
+        if (ps.total_used_filament > 0.0)
+            card.filament_length = fmt("%.2f m", ps.total_used_filament / 1000.0);
+    } catch (...) {
+        // Print not sliced / statistics unavailable: leave results empty.
+    }
+
+    // --- Thumbnail: dump the plate's RGBA thumbnail to a temporary PNG -------
+    std::string tmp_png;
+    const ThumbnailData &td = plate->thumbnail_data;
+    if (td.is_valid()) {
+        wxImage image(td.width, td.height);
+        image.InitAlpha();
+        for (unsigned int r = 0; r < td.height; ++r) {
+            const unsigned int rr = (td.height - 1 - r) * td.width; // stored bottom-up
+            for (unsigned int c = 0; c < td.width; ++c) {
+                const unsigned char *px = td.pixels.data() + 4 * (rr + c);
+                image.SetRGB((int) c, (int) r, px[0], px[1], px[2]);
+                image.SetAlpha((int) c, (int) r, px[3]);
+            }
+        }
+        tmp_png = (boost::filesystem::path(data_dir()) / "print_settings_card_thumb.png").string();
+        if (image.SaveFile(from_u8(tmp_png), wxBITMAP_TYPE_PNG))
+            card.thumbnail_path = tmp_png;
+        else
+            tmp_png.clear();
+    }
+
+    // --- Ask for output path -------------------------------------------------
+    std::string base = card.title.empty() ? std::string("print_settings") : card.title;
+    for (char &ch : base) if (ch == '/' || ch == '\\' || ch == ':') ch = '_';
+    const wxString default_name = from_u8(base + "_plate" + std::to_string(card.plate_index) + ".pdf");
+    wxFileDialog dlg(this, _L("Export print settings card"),
+                     from_u8(wxGetApp().app_config->get_last_dir()), default_name,
+                     "PDF files (*.pdf)|*.pdf", wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+    if (dlg.ShowModal() != wxID_OK) {
+        if (!tmp_png.empty()) { boost::system::error_code ec; boost::filesystem::remove(tmp_png, ec); }
+        return;
+    }
+    const std::string out_path = into_u8(dlg.GetPath());
+
+    const bool ok = GUI::build_print_card_pdf(out_path, card);
+
+    if (!tmp_png.empty()) { boost::system::error_code ec; boost::filesystem::remove(tmp_png, ec); }
+
+    if (ok) {
+        wxGetApp().app_config->update_skein_dir(into_u8(dlg.GetDirectory()));
+    } else {
+        MessageDialog(this, _L("Failed to export the print settings PDF."),
+                      _L("Export print settings"), wxOK | wxICON_ERROR).ShowModal();
+    }
 }
 
 Preset *get_printer_preset(const MachineObject *obj)

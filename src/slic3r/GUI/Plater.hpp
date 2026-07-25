@@ -511,6 +511,9 @@ public:
     void export_gcode_3mf(bool export_all = false);
     void send_gcode_finish(wxString name);
     void export_core_3mf();
+    // Export a one-page PDF "print settings card" (traveler / QA card) for the
+    // current plate: key settings, results and a quality-inspection sign-off box.
+    void export_print_settings_pdf();
     static TriangleMesh combine_mesh_fff(const ModelObject& mo, int instance_id, std::function<void(const std::string&)> notify_func = {});
     void export_stl(bool extended = false, bool selection_only = false, bool multi_stls = false);
     //BBS: remove amf

@@ -2991,6 +2991,10 @@ void MainFrame::init_menubar_as_editor()
             [this](wxCommandEvent&) { if (m_plater != nullptr) m_plater->export_toolpaths_to_obj(); }, "menu_export_toolpaths", nullptr,
             [this]() {return can_export_toolpaths(); }, this);
 
+        append_menu_item(export_menu, wxID_ANY, _L("Export print settings (PDF)") + dots, _L("Export a one-page PDF card of the current plate's print settings and results"),
+            [this](wxCommandEvent&) { if (m_plater != nullptr) m_plater->export_print_settings_pdf(); }, "menu_export_config", nullptr,
+            [this]() {return can_export_gcode(); }, this);
+
         append_menu_item(
             export_menu, wxID_ANY, _L("Export Preset Bundle") + dots /* + "\tCtrl+E"*/, _L("Export current configuration to files"),
             [this](wxCommandEvent &) { export_config(); },

@@ -1658,6 +1658,14 @@ void MenuFactory::create_plate_menu()
         },
         "", nullptr, [this]() { return plater()->get_partplate_list().get_plate_count() >= 2; }, m_parent);
 
+    // export the current plate's print settings as a PDF "traveler / QA card"
+    menu->AppendSeparator();
+    append_menu_item(
+        menu, wxID_ANY, _L("Export print settings (PDF)"), _L("Export a one-page PDF card of this plate's print settings and results"),
+        [](wxCommandEvent&) { plater()->export_print_settings_pdf(); },
+        "", nullptr,
+        []() { return !plater()->get_partplate_list().get_selected_plate()->get_objects().empty(); }, m_parent);
+
     // add shapes
     menu->AppendSeparator();
     wxMenu* sub_menu = append_submenu_add_generic(menu, ModelVolumeType::INVALID);
