@@ -247,6 +247,7 @@ CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(InfillPattern)
 static t_config_enum_values s_keys_map_IroningType {
     { "no ironing",     int(IroningType::NoIroning) },
     { "top",            int(IroningType::TopSurfaces) },
+    { "internal top",   int(IroningType::InternalTopSurfaces) },
     { "topmost",        int(IroningType::TopmostOnly) },
     { "solid",          int(IroningType::AllSolid) }
 };
@@ -3857,14 +3858,19 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Ironing Type");
     def->category = L("Quality");
     def->tooltip = L("Ironing is using small flow to print on same height of surface again to make flat surface more smooth. "
-                     "This setting controls which layer being ironed");
+                     "This setting controls which layer being ironed. "
+                     "\"Iron internal top surfaces only\" irons the same surfaces as \"Top surfaces\", "
+                     "except the final visible top of the print, so pockets, cavities, engravings and terraces "
+                     "are smoothed while the topmost face keeps its regular top surface finish.");
     def->enum_keys_map = &ConfigOptionEnum<IroningType>::get_enum_values();
     def->enum_values.push_back("no ironing");
     def->enum_values.push_back("top");
+    def->enum_values.push_back("internal top");
     def->enum_values.push_back("topmost");
     def->enum_values.push_back("solid");
     def->enum_labels.push_back(L("No ironing"));
     def->enum_labels.push_back(L("Top surfaces"));
+    def->enum_labels.push_back(L("Iron internal top surfaces only"));
     def->enum_labels.push_back(L("Topmost surface"));
     def->enum_labels.push_back(L("All solid layer"));
     def->mode = comAdvanced;

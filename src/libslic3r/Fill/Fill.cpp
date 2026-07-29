@@ -966,11 +966,35 @@ void Layer::make_ironing()
 		if (! layerm->slices.empty()) {
 			IroningParams ironing_params;
 			const PrintRegionConfig &config = layerm->region().config();
-			if (config.ironing_type != IroningType::NoIroning &&
-				(config.ironing_type == IroningType::AllSolid ||
-				 	(config.top_shell_layers > 0 &&
-						(config.ironing_type == IroningType::TopSurfaces ||
-					 	(config.ironing_type == IroningType::TopmostOnly && layerm->layer()->upper_layer == nullptr))))) {
+			// Is this the object's topmost layer, the one at the maximum printable Z?
+			// Its top surfaces make up the final visible top of the print. Every top
+			// surface below it has printed layers above it somewhere else in the object,
+			// which is what makes it an internal top surface: the floor of a pocket or
+			// cavity, an engraving, an embossed region, the tread of a terrace.
+			// upper_layer is kept up to date after empty top layers are dropped
+			// (PrintObject::slice), so this holds for variable and adaptive layer
+			// heights as well, and support layers are not part of this chain.
+			const bool global_top_layer = layerm->layer()->upper_layer == nullptr;
+			bool iron_region = false;
+			switch (config.ironing_type.value) {
+			case IroningType::AllSolid:
+				iron_region = true;
+				break;
+			case IroningType::TopSurfaces:
+				iron_region = config.top_shell_layers > 0;
+				break;
+			case IroningType::InternalTopSurfaces:
+				// Same as TopSurfaces, minus the global top surface.
+				iron_region = config.top_shell_layers > 0 && ! global_top_layer;
+				break;
+			case IroningType::TopmostOnly:
+				iron_region = config.top_shell_layers > 0 && global_top_layer;
+				break;
+			case IroningType::NoIroning:
+			default:
+				break;
+			}
+			if (iron_region) {
 				if (config.wall_filament == config.solid_infill_filament || config.wall_loops == 0) {
 					// Iron the whole face.
 					ironing_params.extruder = config.solid_infill_filament;

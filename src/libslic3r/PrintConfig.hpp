@@ -89,6 +89,11 @@ enum EnsureVerticalThicknessLevel{
 enum class IroningType {
     NoIroning,
     TopSurfaces,
+    // Like TopSurfaces, but skipping the top surfaces of the object's topmost
+    // layer: the final visible top of the print is left alone, everything that
+    // is a top surface only because of a pocket, cavity, engraving or terrace
+    // is ironed.
+    InternalTopSurfaces,
     TopmostOnly,
     AllSolid,
     Count,
