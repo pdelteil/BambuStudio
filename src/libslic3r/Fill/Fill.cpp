@@ -885,6 +885,23 @@ Polylines Layer::generate_sparse_infill_polylines_for_anchoring(FillAdaptive::Oc
 }
 
 
+// Does this layer fall inside the region's "skip ironing" layer range?
+// Layers are numbered with the bottom layer of the object as 1, matching the
+// preview. 0 means unset on either end: both unset iron everywhere, an unset
+// end reaches the top of the print, an unset start reaches down to the first
+// layer. A range that ends before it starts is ignored rather than skipping
+// everything, which would silently turn ironing off.
+static bool ironing_skipped_on_layer(const PrintRegionConfig &config, int layer_number)
+{
+	const int start = config.ironing_skip_layer_start.value;
+	const int end   = config.ironing_skip_layer_end.value;
+	if (start <= 0 && end <= 0)
+		return false;
+	if (start > 0 && end > 0 && end < start)
+		return false;
+	return layer_number >= (start > 0 ? start : 1) && (end <= 0 || layer_number <= end);
+}
+
 // Create ironing extrusions over top surfaces.
 void Layer::make_ironing()
 {
@@ -962,6 +979,10 @@ void Layer::make_ironing()
 	std::vector<IroningParams> by_extruder;
     double default_layer_height = this->object()->config().layer_height;
 
+	// Layer::id() counts the raft layers first, so subtract them to get the
+	// number the user sees for this object's own layers, the bottom one being 1.
+	const int layer_number = int(this->id()) - int(this->object()->slicing_parameters().raft_layers()) + 1;
+
 	for (LayerRegion *layerm : m_regions)
 		if (! layerm->slices.empty()) {
 			IroningParams ironing_params;
@@ -994,6 +1015,8 @@ void Layer::make_ironing()
 			default:
 				break;
 			}
+			if (iron_region && ironing_skipped_on_layer(config, layer_number))
+				iron_region = false;
 			if (iron_region) {
 				if (config.wall_filament == config.solid_infill_filament || config.wall_loops == 0) {
 					// Iron the whole face.

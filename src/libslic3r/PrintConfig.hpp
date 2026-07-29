@@ -1094,6 +1094,10 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat, ironing_inset))
     ((ConfigOptionFloat, ironing_direction))
     ((ConfigOptionFloat, ironing_speed))
+    // Inclusive range of layers that is never ironed, the bottom layer of the
+    // object being 1. 0 means unset on either end.
+    ((ConfigOptionInt, ironing_skip_layer_start))
+    ((ConfigOptionInt, ironing_skip_layer_end))
     // Detect bridging perimeters
     ((ConfigOptionBool, detect_overhang_wall))
     ((ConfigOptionBool, smooth_speed_discontinuity_area))

@@ -1011,7 +1011,8 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
 
     bool has_ironing = (config->opt_enum<IroningType>("ironing_type") != IroningType::NoIroning);
     for (auto el : {
-        "ironing_pattern","ironing_speed", "ironing_flow", "ironing_spacing", "ironing_direction", "ironing_inset"})
+        "ironing_pattern","ironing_speed", "ironing_flow", "ironing_spacing", "ironing_direction", "ironing_inset",
+        "ironing_skip_layer_start", "ironing_skip_layer_end"})
         toggle_line(el, has_ironing);
 
     // has ironingable support interface

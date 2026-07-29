@@ -3938,6 +3938,28 @@ void PrintConfigDef::init_fff_params()
     def->mode     = comDevelop;
     def->set_default_value(new ConfigOptionFloat(45));
 
+    def           = this->add("ironing_skip_layer_start", coInt);
+    def->label    = L("Skip ironing from layer");
+    def->category = L("Quality");
+    def->tooltip  = L("First layer of a range that is never ironed, counting the bottom layer of the object as layer 1. "
+                      "Leave both this and \"Skip ironing to layer\" at 0 to iron everywhere. "
+                      "If only this one is set, ironing is skipped from this layer up to the top of the print. "
+                      "Layer numbers follow the object, so they shift if you change layer height or enable adaptive layers.");
+    def->min      = 0;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def           = this->add("ironing_skip_layer_end", coInt);
+    def->label    = L("Skip ironing to layer");
+    def->category = L("Quality");
+    def->tooltip  = L("Last layer of the range that is never ironed, counting the bottom layer of the object as layer 1. "
+                      "The range includes both ends. "
+                      "If only this one is set, ironing is skipped from the first layer up to this one. "
+                      "A range that ends before it starts is ignored.");
+    def->min      = 0;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
     def = this->add("layer_change_gcode", coString);
     def->label = L("Layer change G-code");
     def->tooltip = L("This gcode part is inserted at every layer change after lift z");
