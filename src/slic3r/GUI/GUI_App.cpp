@@ -89,6 +89,7 @@
 #include "../Utils/Process.hpp"
 #include "../Utils/MacDarkMode.hpp"
 #include "../Utils/Http.hpp"
+#include "../Utils/OfflineMode.hpp"
 #include "../Utils/UndoRedo.hpp"
 #include "../Utils/HelioDragon.hpp"
 #include "slic3r/Config/Snapshot.hpp"
@@ -3049,6 +3050,10 @@ bool GUI_App::on_init_inner()
 
     BOOST_LOG_TRIVIAL(info) << boost::format("gui mode, Current BambuStudio Version %1%")%SLIC3R_VERSION << ", BuildTime " << SLIC3R_BUILD_TIME;
 
+    BOOST_LOG_TRIVIAL(info) << (offline_mode_enabled() ?
+        "offline mode: only local network destinations are reachable (unset BAMBU_ALLOW_INTERNET to keep it that way)" :
+        "offline mode: disabled by BAMBU_ALLOW_INTERNET");
+
 #if !BBL_RELEASE_TO_PUBLIC
     BOOST_LOG_TRIVIAL(info) << boost::format("Build Version %1%")%SLIC3R_COMPILE_VERSION;
 #endif
@@ -5352,18 +5357,31 @@ void GUI_App::on_user_login_handle(wxCommandEvent &evt)
     if (!m_agent) { return; }
 
     int online_login = evt.GetInt();
-    m_agent->connect_server();
+    // BBS: offline build. Never ask the plugin to open a cloud MQTT session or
+    // pull the cloud machine list. The stored session itself is left untouched,
+    // so nothing has to be re-logged-in when this build is run with
+    // BAMBU_ALLOW_INTERNET=1. Locally bound (LAN-mode) printers still come back
+    // through restore_local_machines_from_user_access_config() below.
+    const bool offline = offline_mode_enabled();
+    if (offline)
+        BOOST_LOG_TRIVIAL(info) << "offline mode: skipping cloud connect and machine list sync";
+    else
+        m_agent->connect_server();
     // get machine list
     DeviceManager* dev = Slic3r::GUI::wxGetApp().getDeviceManager();
     if (!dev) return;
 
-    boost::thread update_thread = boost::thread([this, dev] {
-        dev->update_user_machine_list_info();
-        CallAfter([this, dev]() {
-            m_load_last_machine.TryLoadFromHttpCB(m_agent, dev);
-            dev->restore_local_machines_from_user_access_config();
+    if (offline) {
+        dev->restore_local_machines_from_user_access_config();
+    } else {
+        boost::thread update_thread = boost::thread([this, dev] {
+            dev->update_user_machine_list_info();
+            CallAfter([this, dev]() {
+                m_load_last_machine.TryLoadFromHttpCB(m_agent, dev);
+                dev->restore_local_machines_from_user_access_config();
+            });
         });
-    });
+    }
 
     if (online_login) {
         remove_user_presets();
@@ -5371,11 +5389,12 @@ void GUI_App::on_user_login_handle(wxCommandEvent &evt)
         preset_bundle->load_user_presets(m_agent->get_user_id(), ForwardCompatibilitySubstitutionRule::Enable);
         mainframe->update_side_preset_ui();
 
-        GUI::wxGetApp().mainframe->show_sync_dialog();
+        if (!offline)
+            GUI::wxGetApp().mainframe->show_sync_dialog();
 
         // Trigger filament-manager cloud pull on the dispatcher queue; no-op if
         // already pulling.  Runs after login so auth token is available.
-        if (!m_disable_fila_manager && m_fila_manager_cloud_disp) {
+        if (!offline && !m_disable_fila_manager && m_fila_manager_cloud_disp) {
             m_fila_manager_cloud_disp->enqueue_pull();
         }
         if (!m_disable_fila_manager && mainframe && mainframe->web_device()) {
@@ -5387,6 +5406,16 @@ void GUI_App::on_user_login_handle(wxCommandEvent &evt)
 
 void GUI_App::check_track_enable()
 {
+    // Offline build: usage tracking goes straight to the cloud from inside the
+    // networking plugin, where the Http gate cannot reach it. Turn it off at
+    // the source instead of feeding it events.
+    if (offline_mode_enabled()) {
+        BOOST_LOG_TRIVIAL(info) << "offline mode: disabling usage tracking";
+        if (m_agent)
+            m_agent->track_enable(false);
+        return;
+    }
+
     if (app_config && app_config->get("firstguide", "privacyuse") == "true") {
         //enable track event
         json header_json;
@@ -5478,6 +5507,14 @@ void GUI_App::check_update(bool show_tips, int by_user)
 
 void GUI_App::check_new_version(bool show_tips, int by_user)
 {
+    // Offline build: no update server to ask.
+    if (offline_mode_enabled()) {
+        BOOST_LOG_TRIVIAL(info) << "offline mode: skipping version check";
+        if (show_tips)
+            this->no_new_version();
+        return;
+    }
+
     std::string platform = "windows";
 
 #ifdef __WINDOWS__
@@ -5682,6 +5719,12 @@ void GUI_App::check_beta_version(bool show_tips_when_no_beta)
 
 void GUI_App::check_cert()
 {
+    // Offline build: certificate revocation lists are fetched from the cloud.
+    if (offline_mode_enabled()) {
+        BOOST_LOG_TRIVIAL(info) << "offline mode: skipping check_cert";
+        return;
+    }
+
     m_check_cert_thread = Slic3r::create_thread(
         [this]{
             if (m_agent)
@@ -5886,6 +5929,14 @@ void GUI_App::on_check_privacy_update(wxCommandEvent& evt)
 
 void GUI_App::check_privacy_version(int online_login)
 {
+    // Offline build: the privacy policy version lives on the cloud. Keep the
+    // login flow moving instead of waiting for a request that cannot happen.
+    if (offline_mode_enabled()) {
+        BOOST_LOG_TRIVIAL(info) << "offline mode: skipping privacy version check";
+        request_user_handle(online_login);
+        return;
+    }
+
     update_http_extra_header();
     std::string query_params = "?policy/privacy=00.00.00.00";
     std::string url = get_http_url(app_config->get_country_code()) + query_params;
@@ -6212,6 +6263,12 @@ void GUI_App::sync_preset(Preset* preset)
 void GUI_App::start_sync_user_preset(bool with_progress_dlg)
 {
     if (!m_agent || !m_agent->is_user_login()) return;
+
+    // Offline build: user presets stay on this machine.
+    if (offline_mode_enabled()) {
+        BOOST_LOG_TRIVIAL(info) << "offline mode: not starting user preset sync";
+        return;
+    }
 
     // has already start sync
     if (m_user_sync_token) return;

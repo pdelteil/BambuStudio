@@ -1,6 +1,7 @@
 #include "WebView.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/Utils/MacDarkMode.hpp"
+#include "slic3r/Utils/OfflineMode.hpp"
 
 #include <boost/log/trivial.hpp>
 
@@ -319,6 +320,12 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
     if (!url2.empty()) { url2 = wxURI(url2).BuildURI(); }
     //BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << ": " << url2.ToUTF8();
 
+    // Offline build: never hand a remote start page to a fresh web view.
+    if (Slic3r::offline_mode_enabled() && !Slic3r::url_is_local(url2.ToUTF8().data())) {
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": offline mode, not loading " << url2.ToUTF8();
+        url2 = "about:blank";
+    }
+
 #ifdef __WIN32__
     enable_default_webview2_cdp_for_internal_builds();
 
@@ -393,6 +400,22 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
         });
 #endif
         webView->EnableContextMenu(false);
+
+        // Offline build: veto any navigation that would leave the local network.
+        // This is the single choke point for every web view in the app (Home,
+        // MakerWorld, wiki, printer host, login), including sub-frames and
+        // redirects, so callers that use wxWebView::LoadURL() directly are
+        // covered too.
+        if (Slic3r::offline_mode_enabled()) {
+            webView->Bind(wxEVT_WEBVIEW_NAVIGATING, [](wxWebViewEvent &event) {
+                if (Slic3r::url_is_local(event.GetURL().ToUTF8().data())) {
+                    event.Skip();
+                    return;
+                }
+                BOOST_LOG_TRIVIAL(info) << "offline mode: blocked web view navigation to " << event.GetURL().ToUTF8();
+                event.Veto();
+            });
+        }
     } else {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": failed. Use fake web view.";
         webView = new FakeWebView;
@@ -410,6 +433,10 @@ void WebView::LoadUrl(wxWebView * webView, wxString const &url)
 #endif
     if (!url2.empty()) { url2 = wxURI(url2).BuildURI(); }
     //BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << url2.ToUTF8();
+    if (Slic3r::offline_mode_enabled() && !Slic3r::url_is_local(url2.ToUTF8().data())) {
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": offline mode, not loading " << url2.ToUTF8();
+        return;
+    }
     webView->LoadURL(url2);
 }
 

@@ -601,6 +601,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/EmbossStyleManager.hpp
     Utils/Http.cpp
     Utils/Http.hpp
+    Utils/OfflineMode.cpp
+    Utils/OfflineMode.hpp
     Utils/FixModelByWin10.cpp
     Utils/FixModelByWin10.hpp
     Utils/Bonjour.cpp

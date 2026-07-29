@@ -33,6 +33,7 @@
 #include "slic3r/GUI/format.hpp"
 #include "slic3r/GUI/NotificationManager.hpp"
 #include "slic3r/Utils/Http.hpp"
+#include "slic3r/Utils/OfflineMode.hpp"
 #include "slic3r/Config/Version.hpp"
 #include "slic3r/Config/Snapshot.hpp"
 #include "slic3r/GUI/MarkdownTip.hpp"
@@ -1638,6 +1639,12 @@ void PresetUpdater::sync(std::string http_url, std::string language, std::string
 {
     //p->set_download_prefs(GUI::wxGetApp().app_config);
     if (!p->enabled_version_check && !p->enabled_config_update) { return; }
+
+    // Offline build: no profile/plugin sync thread, it could only fail.
+    if (offline_mode_enabled()) {
+        BOOST_LOG_TRIVIAL(info) << "offline mode: skipping preset sync";
+        return;
+    }
 
     // Copy the whole vendors data for use in the background thread
     // Unfortunatelly as of C++11, it needs to be copied again

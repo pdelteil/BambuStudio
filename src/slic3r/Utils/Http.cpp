@@ -1,4 +1,5 @@
 #include "Http.hpp"
+#include "OfflineMode.hpp"
 
 #include <cstdlib>
 #include <functional>
@@ -100,6 +101,8 @@ struct Http::priv
 	::curl_httppost *form_end;
 	::curl_mime* mime;
 	::curl_slist *headerlist;
+	// The request URL, kept for the offline mode check in http_perform()
+	std::string url;
 	// Used for reading the body
 	std::string buffer;
 	// Used for storing file streams added as multipart form parts
@@ -158,6 +161,7 @@ Http::priv::priv(const std::string &url)
 	, form_end(nullptr)
 	, mime(nullptr)
 	, headerlist(nullptr)
+	, url(url)
 	, error_buffer(CURL_ERROR_SIZE + 1, '\0')
 	, limit(0)
 	, cancel(false)
@@ -389,6 +393,15 @@ std::string Http::priv::body_size_error()
 
 void Http::priv::http_perform()
 {
+	// Offline build: nothing but the local network is reachable. Fail the
+	// request here, before curl opens a socket or even resolves the name.
+	if (offline_mode_enabled() && !url_is_local(url)) {
+		const std::string host = url_host(url);
+		BOOST_LOG_TRIVIAL(info) << boost::format("offline mode: blocked HTTP request to %1%") % (host.empty() ? url : host);
+		if (errorfn) { errorfn(std::string(), "Offline mode: request to " + (host.empty() ? url : host) + " was blocked", 0); }
+		return;
+	}
+
 	::curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
 	::curl_easy_setopt(curl, CURLOPT_POSTREDIR, CURL_REDIR_POST_ALL);
 	::curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writecb);
