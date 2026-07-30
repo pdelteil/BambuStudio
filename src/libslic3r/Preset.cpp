@@ -1023,6 +1023,7 @@ static std::vector<std::string> s_Preset_print_options {
     "symmetric_infill_y_axis","sparse_infill_lattice_angle_1","sparse_infill_lattice_angle_2",
     "minimum_sparse_infill_area", "reduce_infill_retraction_mode", "ironing_pattern", "ironing_type",
     "ironing_flow", "ironing_speed", "ironing_spacing","ironing_direction", "ironing_inset",
+    "ironing_skip_layer_start", "ironing_skip_layer_end",
     "enable_support_ironing","support_ironing_pattern","support_ironing_speed",
     "support_ironing_flow","support_ironing_spacing","support_ironing_inset","support_ironing_direction",
     "max_travel_detour_distance", "avoid_crossing_wall_includes_support",
