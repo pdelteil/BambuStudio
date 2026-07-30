@@ -72,6 +72,7 @@ public:
     void select_curr_plate_all();
     void select_object_from_idx(std::vector<int> &object_idxs);
     void remove_curr_plate_all();
+    void remove_others_on_curr_plate();
 
     void select_all();
     void deselect_all();

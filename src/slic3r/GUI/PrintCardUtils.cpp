@@ -169,9 +169,17 @@ namespace {
 const char *dash_if_empty(const std::string &s) { return s.empty() ? "-" : s.c_str(); }
 
 // One key/value line inside a section box. Returns the y of the next line.
+// Type sizes for the card. Kept small on purpose: the card carries a lot of
+// settings and has to stay on one A4 page.
+const float CARD_FONT_SECTION = 9.0f;   // section title bars
+const float CARD_FONT_ROW     = 8.5f;   // setting rows
+const float CARD_ROW_GAP      = 4.0f;   // leading added to the font size
+const float CARD_ROW_PITCH    = CARD_FONT_ROW + CARD_ROW_GAP;
+
 float draw_kv(HPDF_Page page, HPDF_Font font, float x, float y,
               float label_w, float value_w, float size,
-              const std::string &label, const std::string &value)
+              const std::string &label, const std::string &value,
+              float gap = CARD_ROW_GAP)
 {
     HPDF_Page_BeginText(page);
     HPDF_Page_SetFontAndSize(page, font, size);
@@ -179,7 +187,7 @@ float draw_kv(HPDF_Page page, HPDF_Font font, float x, float y,
     const std::string v = pdf_fit_text_with_ellipsis(page, dash_if_empty(value), value_w);
     draw_pdf_bold_text(page, x + label_w, y, v);
     HPDF_Page_EndText(page);
-    return y - (size + 6.0f);
+    return y - (size + gap);
 }
 
 // Section header + framed box. Caller draws the rows; header_h is where rows start.
@@ -192,7 +200,7 @@ void draw_section_frame(HPDF_Page page, HPDF_Font font, float x, float y_top,
     HPDF_Page_Fill(page);
     HPDF_Page_SetRGBFill(page, 1.0f, 1.0f, 1.0f);
     HPDF_Page_BeginText(page);
-    HPDF_Page_SetFontAndSize(page, font, 10.0f);
+    HPDF_Page_SetFontAndSize(page, font, CARD_FONT_SECTION);
     draw_pdf_bold_text(page, x + 6.0f, y_top - 13.0f, title);
     HPDF_Page_EndText(page);
     HPDF_Page_SetRGBFill(page, 0.0f, 0.0f, 0.0f);
@@ -291,18 +299,18 @@ bool build_print_card_pdf(const std::string &pdf_path, const PrintCardData &data
     y = top_y - thumb_h - 22.0f;
 
     // --- Settings section ----------------------------------------------------
-    const float sec_h = 132.0f;
+    const float sec_h = 5.0f * CARD_ROW_PITCH + 34.0f;
     draw_section_frame(page, font, margin, y, content_w, sec_h, "Print settings");
     {
         const float col_x   = margin + 8.0f;
-        const float label_w = 150.0f;
+        const float label_w = 130.0f;
         const float value_w = content_w - 16.0f - label_w;
         float ry = y - 30.0f;
-        ry = draw_kv(page, font, col_x, ry, label_w, value_w, 10.0f, "Layer height",       data.layer_height);
+        ry = draw_kv(page, font, col_x, ry, label_w, value_w, CARD_FONT_ROW, "Layer height",       data.layer_height);
         if (!data.initial_layer_height.empty())
-            ry = draw_kv(page, font, col_x, ry, label_w, value_w, 10.0f, "First layer height", data.initial_layer_height);
-        ry = draw_kv(page, font, col_x, ry, label_w, value_w, 10.0f, "Wall loops",         data.wall_loops);
-        ry = draw_kv(page, font, col_x, ry, label_w, value_w, 10.0f, "Sparse infill",
+            ry = draw_kv(page, font, col_x, ry, label_w, value_w, CARD_FONT_ROW, "First layer height", data.initial_layer_height);
+        ry = draw_kv(page, font, col_x, ry, label_w, value_w, CARD_FONT_ROW, "Wall loops",         data.wall_loops);
+        ry = draw_kv(page, font, col_x, ry, label_w, value_w, CARD_FONT_ROW, "Sparse infill",
                      data.sparse_infill_pattern.empty()
                          ? data.sparse_infill_density
                          : data.sparse_infill_density + "  (" + data.sparse_infill_pattern + ")");
@@ -310,30 +318,77 @@ bool build_print_card_pdf(const std::string &pdf_path, const PrintCardData &data
             std::string vlh = data.variable_layer_height ? "Yes" : "No";
             if (data.variable_layer_height && !data.variable_layer_height_range.empty())
                 vlh += "  (" + data.variable_layer_height_range + ")";
-            ry = draw_kv(page, font, col_x, ry, label_w, value_w, 10.0f, "Variable layer height", vlh);
-        }
-        {
-            std::string iron = data.ironing ? "Yes" : "No";
-            if (data.ironing && !data.ironing_type.empty())
-                iron += "  (" + data.ironing_type + ")";
-            ry = draw_kv(page, font, col_x, ry, label_w, value_w, 10.0f, "Ironing", iron);
-            if (data.ironing) {
-                std::string params;
-                auto add = [&params](const std::string &k, const std::string &v) {
-                    if (v.empty()) return;
-                    if (!params.empty()) params += "   ";
-                    params += k + " " + v;
-                };
-                add("flow", data.ironing_flow);
-                add("spacing", data.ironing_spacing);
-                add("speed", data.ironing_speed);
-                if (!params.empty())
-                    ry = draw_kv(page, font, col_x, ry, label_w, value_w, 9.0f, "  Ironing params", params);
-            }
+            ry = draw_kv(page, font, col_x, ry, label_w, value_w, CARD_FONT_ROW, "Variable layer height", vlh);
         }
     }
 
     y -= sec_h + 20.0f;
+
+    // --- Ironing section -----------------------------------------------------
+    // Every ironing parameter, two columns of five rows. The values are shown
+    // whether or not ironing is enabled: the first row says which it is, and
+    // the rest document what would be (or was) used.
+    const float iron_h = 5.0f * CARD_ROW_PITCH + 34.0f;
+    draw_section_frame(page, font, margin, y, content_w, iron_h, "Ironing");
+    {
+        const float half      = content_w * 0.5f;
+        const float lcol_x    = margin + 8.0f;
+        const float rcol_x    = margin + 8.0f + half;
+        const float ir_label  = 110.0f;
+        const float ir_value  = half - 16.0f - ir_label;
+        const float row_top   = y - 30.0f;
+
+        std::string type = dash_if_empty(data.ironing_type);
+        if (!data.ironing)
+            type += "  (off)";
+
+        // Type spans the full width: "Iron internal top surfaces only" is wider
+        // than a single column can hold.
+        const float full_value = content_w - 16.0f - ir_label;
+        const float cols_top   = draw_kv(page, font, lcol_x, row_top, ir_label, full_value,
+                                         CARD_FONT_ROW, "Type", type);
+
+        float ly = cols_top;
+        ly = draw_kv(page, font, lcol_x, ly, ir_label, ir_value, CARD_FONT_ROW, "Pattern", data.ironing_pattern);
+        ly = draw_kv(page, font, lcol_x, ly, ir_label, ir_value, CARD_FONT_ROW, "Flow",    data.ironing_flow);
+        ly = draw_kv(page, font, lcol_x, ly, ir_label, ir_value, CARD_FONT_ROW, "Spacing", data.ironing_spacing);
+        ly = draw_kv(page, font, lcol_x, ly, ir_label, ir_value, CARD_FONT_ROW, "Inset",   data.ironing_inset);
+
+        float ry = cols_top;
+        ry = draw_kv(page, font, rcol_x, ry, ir_label, ir_value, CARD_FONT_ROW, "Speed",       data.ironing_speed);
+        ry = draw_kv(page, font, rcol_x, ry, ir_label, ir_value, CARD_FONT_ROW, "Direction",   data.ironing_direction);
+        ry = draw_kv(page, font, rcol_x, ry, ir_label, ir_value, CARD_FONT_ROW, "Skip layers", data.ironing_skip_layers);
+    }
+
+    y -= iron_h + 20.0f;
+
+    // --- Line widths section -------------------------------------------------
+    // Two columns of four rows; values are already resolved against the default
+    // width by the caller, so each row is the width actually extruded.
+    const float lw_h = 4.0f * CARD_ROW_PITCH + 34.0f;
+    draw_section_frame(page, font, margin, y, content_w, lw_h, "Line widths");
+    {
+        const float half     = content_w * 0.5f;
+        const float lcol_x   = margin + 8.0f;
+        const float rcol_x   = margin + 8.0f + half;
+        const float lw_label = 110.0f;
+        const float lw_value = half - 16.0f - lw_label;
+        const float row_top  = y - 30.0f;
+
+        float ly = row_top;
+        ly = draw_kv(page, font, lcol_x, ly, lw_label, lw_value, CARD_FONT_ROW, "Default",       data.line_width_default);
+        ly = draw_kv(page, font, lcol_x, ly, lw_label, lw_value, CARD_FONT_ROW, "First layer",   data.line_width_initial_layer);
+        ly = draw_kv(page, font, lcol_x, ly, lw_label, lw_value, CARD_FONT_ROW, "Outer wall",    data.line_width_outer_wall);
+        ly = draw_kv(page, font, lcol_x, ly, lw_label, lw_value, CARD_FONT_ROW, "Inner wall",    data.line_width_inner_wall);
+
+        float ry2 = row_top;
+        ry2 = draw_kv(page, font, rcol_x, ry2, lw_label, lw_value, CARD_FONT_ROW, "Top surface",           data.line_width_top_surface);
+        ry2 = draw_kv(page, font, rcol_x, ry2, lw_label, lw_value, CARD_FONT_ROW, "Sparse infill",         data.line_width_sparse_infill);
+        ry2 = draw_kv(page, font, rcol_x, ry2, lw_label, lw_value, CARD_FONT_ROW, "Internal solid infill", data.line_width_internal_solid_infill);
+        ry2 = draw_kv(page, font, rcol_x, ry2, lw_label, lw_value, CARD_FONT_ROW, "Support",               data.line_width_support);
+    }
+
+    y -= lw_h + 20.0f;
 
     // --- QA approval box -----------------------------------------------------
     const float qa_h = 96.0f;
@@ -383,6 +438,178 @@ bool build_print_card_pdf(const std::string &pdf_path, const PrintCardData &data
     HPDF_Free(pdf);
     if (st != HPDF_OK) {
         BOOST_LOG_TRIVIAL(error) << "print card export: HPDF_SaveToFile failed, status=" << st;
+        return false;
+    }
+    return true;
+}
+
+bool build_layer_height_sweep_pdf(const std::string &pdf_path, const LayerHeightSweepData &data)
+{
+    HPDF_Doc pdf = HPDF_New(nullptr, nullptr);
+    if (!pdf)
+        return false;
+
+    HPDF_SetCompressionMode(pdf, HPDF_COMP_ALL);
+    HPDF_Font font = load_unicode_pdf_font(pdf);
+
+    HPDF_Page page = HPDF_AddPage(pdf);
+    HPDF_Page_SetSize(page, HPDF_PAGE_SIZE_A4, HPDF_PAGE_PORTRAIT);
+    const float page_w = HPDF_Page_GetWidth(page);
+    const float page_h = HPDF_Page_GetHeight(page);
+    const float margin = 40.0f;
+    const float content_w = page_w - 2.0f * margin;
+
+    // --- Header --------------------------------------------------------------
+    float y = page_h - margin;
+    HPDF_Page_BeginText(page);
+    HPDF_Page_SetFontAndSize(page, font, 20.0f);
+    draw_pdf_bold_text(page, margin, y - 16.0f,
+                       pdf_fit_text_with_ellipsis(page, "Layer height comparison", content_w - 140.0f));
+    HPDF_Page_SetFontAndSize(page, font, 9.0f);
+    {
+        const std::string dline = std::string("Date: ") + dash_if_empty(data.date);
+        const float dw = HPDF_Page_TextWidth(page, dline.c_str());
+        HPDF_Page_TextOut(page, page_w - margin - dw, y - 10.0f, dline.c_str());
+        const std::string pline = "Plate " + std::to_string(data.plate_index);
+        const float pw = HPDF_Page_TextWidth(page, pline.c_str());
+        HPDF_Page_TextOut(page, page_w - margin - pw, y - 22.0f, pline.c_str());
+    }
+    HPDF_Page_EndText(page);
+
+    y -= 26.0f;
+    HPDF_Page_SetLineWidth(page, 1.0f);
+    HPDF_Page_MoveTo(page, margin, y);
+    HPDF_Page_LineTo(page, page_w - margin, y);
+    HPDF_Page_Stroke(page);
+    y -= 14.0f;
+
+    // --- Top row: thumbnail (left) + identity (right) ------------------------
+    const float thumb_w = 120.0f;
+    const float thumb_h = 120.0f;
+    const float top_y   = y;
+
+    HPDF_Page_SetRGBStroke(page, 0.6f, 0.6f, 0.6f);
+    HPDF_Page_SetLineWidth(page, 0.6f);
+    HPDF_Page_Rectangle(page, margin, top_y - thumb_h, thumb_w, thumb_h);
+    HPDF_Page_Stroke(page);
+    HPDF_Page_SetRGBStroke(page, 0.0f, 0.0f, 0.0f);
+    if (HPDF_Image thumb = load_pdf_image_from_file(pdf, data.thumbnail_path))
+        draw_pdf_image_fit(page, thumb, margin + 4.0f, top_y - thumb_h + 4.0f, thumb_w - 8.0f, thumb_h - 8.0f);
+
+    const float id_x = margin + thumb_w + 20.0f;
+    const float id_label_w = 95.0f;
+    const float id_value_w = page_w - margin - id_x - id_label_w;
+    float iy = top_y - 4.0f;
+    iy = draw_kv(page, font, id_x, iy, id_label_w, id_value_w, 10.0f, "Model",    data.title);
+    iy = draw_kv(page, font, id_x, iy, id_label_w, id_value_w, 10.0f, "Printer",  data.printer_preset);
+    iy = draw_kv(page, font, id_x, iy, id_label_w, id_value_w, 10.0f, "Nozzle",   data.nozzle_diameter);
+    iy = draw_kv(page, font, id_x, iy, id_label_w, id_value_w, 10.0f, "Process",  data.process_preset);
+    iy = draw_kv(page, font, id_x, iy, id_label_w, id_value_w, 10.0f, "Filament", data.filament_preset);
+
+    y = top_y - thumb_h - 22.0f;
+
+    // --- Comparison table ----------------------------------------------------
+    // Column x offsets relative to the left margin; the last entry is the right edge.
+    const float col_x[8] = { 0.0f, 78.0f, 158.0f, 220.0f, 292.0f, 357.0f, 407.0f, content_w };
+    const char *headers[7] = { "Layer height", "Print time", "vs current", "Filament", "Length", "Objects", "Time / object" };
+    const int   n_cols = 7;
+    const float row_h = 17.0f;
+
+    // Header band
+    HPDF_Page_SetRGBFill(page, 0.16f, 0.16f, 0.16f);
+    HPDF_Page_Rectangle(page, margin, y - 18.0f, content_w, 18.0f);
+    HPDF_Page_Fill(page);
+    HPDF_Page_SetRGBFill(page, 1.0f, 1.0f, 1.0f);
+    HPDF_Page_BeginText(page);
+    HPDF_Page_SetFontAndSize(page, font, 9.0f);
+    for (int c = 0; c < n_cols; ++c)
+        draw_pdf_bold_text(page, margin + col_x[c] + 6.0f, y - 13.0f, headers[c]);
+    HPDF_Page_EndText(page);
+    HPDF_Page_SetRGBFill(page, 0.0f, 0.0f, 0.0f);
+
+    float ry = y - 18.0f;
+    for (size_t i = 0; i < data.rows.size(); ++i) {
+        const LayerHeightSweepRow &r = data.rows[i];
+        // Shade the row the plate started on so it is easy to find in the table.
+        if (r.is_current) {
+            HPDF_Page_SetRGBFill(page, 0.90f, 0.94f, 1.0f);
+            HPDF_Page_Rectangle(page, margin, ry - row_h, content_w, row_h);
+            HPDF_Page_Fill(page);
+            HPDF_Page_SetRGBFill(page, 0.0f, 0.0f, 0.0f);
+        } else if (i % 2 == 1) {
+            HPDF_Page_SetRGBFill(page, 0.96f, 0.96f, 0.96f);
+            HPDF_Page_Rectangle(page, margin, ry - row_h, content_w, row_h);
+            HPDF_Page_Fill(page);
+            HPDF_Page_SetRGBFill(page, 0.0f, 0.0f, 0.0f);
+        }
+
+        const float ty = ry - 12.0f;
+        HPDF_Page_BeginText(page);
+        HPDF_Page_SetFontAndSize(page, font, 9.0f);
+        // Layer height, bold on the starting row
+        {
+            std::string lh = dash_if_empty(r.layer_height);
+            if (r.is_current)
+                lh += "  (current)";
+            if (r.is_current)
+                draw_pdf_bold_text(page, margin + col_x[0] + 6.0f, ty, lh);
+            else
+                HPDF_Page_TextOut(page, margin + col_x[0] + 6.0f, ty, lh.c_str());
+        }
+        if (r.failed) {
+            HPDF_Page_SetRGBFill(page, 0.6f, 0.2f, 0.2f);
+            HPDF_Page_TextOut(page, margin + col_x[1] + 6.0f, ty, "slicing failed");
+            HPDF_Page_SetRGBFill(page, 0.0f, 0.0f, 0.0f);
+        } else {
+            const std::string cells[6] = { dash_if_empty(r.print_time), dash_if_empty(r.delta_vs_current),
+                                           dash_if_empty(r.filament_grams), dash_if_empty(r.filament_length),
+                                           dash_if_empty(r.objects), dash_if_empty(r.time_per_object) };
+            for (int c = 0; c < n_cols - 1; ++c) {
+                const std::string v = pdf_fit_text_with_ellipsis(page, cells[c], col_x[c + 2] - col_x[c + 1] - 10.0f);
+                HPDF_Page_TextOut(page, margin + col_x[c + 1] + 6.0f, ty, v.c_str());
+            }
+        }
+        HPDF_Page_EndText(page);
+        ry -= row_h;
+    }
+
+    // Table frame + column rules
+    HPDF_Page_SetLineWidth(page, 0.6f);
+    HPDF_Page_SetRGBStroke(page, 0.6f, 0.6f, 0.6f);
+    HPDF_Page_Rectangle(page, margin, ry, content_w, y - 18.0f - ry);
+    HPDF_Page_Stroke(page);
+    for (int c = 1; c < n_cols; ++c) {
+        HPDF_Page_MoveTo(page, margin + col_x[c], y - 18.0f);
+        HPDF_Page_LineTo(page, margin + col_x[c], ry);
+    }
+    HPDF_Page_Stroke(page);
+    HPDF_Page_SetRGBStroke(page, 0.0f, 0.0f, 0.0f);
+
+    // --- Method note ---------------------------------------------------------
+    ry -= 22.0f;
+    HPDF_Page_BeginText(page);
+    HPDF_Page_SetFontAndSize(page, font, 8.0f);
+    HPDF_Page_SetRGBFill(page, 0.35f, 0.35f, 0.35f);
+    HPDF_Page_TextOut(page, margin, ry,
+                      "Each row is a full slice of this plate with only the layer height changed; all other process settings were held constant.");
+    HPDF_Page_TextOut(page, margin, ry - 11.0f,
+                      "Per-object figures divide the plate total by the number of printable instances, so shared overhead is spread evenly.");
+    HPDF_Page_SetRGBFill(page, 0.0f, 0.0f, 0.0f);
+    HPDF_Page_EndText(page);
+
+    // --- Footer --------------------------------------------------------------
+    HPDF_Page_BeginText(page);
+    HPDF_Page_SetFontAndSize(page, font, 7.5f);
+    HPDF_Page_SetRGBFill(page, 0.55f, 0.55f, 0.55f);
+    HPDF_Page_TextOut(page, margin, margin - 12.0f,
+                      "Generated by Bambu Studio - layer height comparison");
+    HPDF_Page_SetRGBFill(page, 0.0f, 0.0f, 0.0f);
+    HPDF_Page_EndText(page);
+
+    const HPDF_STATUS st = HPDF_SaveToFile(pdf, pdf_path.c_str());
+    HPDF_Free(pdf);
+    if (st != HPDF_OK) {
+        BOOST_LOG_TRIVIAL(error) << "layer height sweep export: HPDF_SaveToFile failed, status=" << st;
         return false;
     }
     return true;

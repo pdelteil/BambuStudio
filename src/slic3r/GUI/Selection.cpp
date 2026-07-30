@@ -599,6 +599,52 @@ void Selection::remove_curr_plate()
     erase();
 }
 
+void Selection::remove_others_on_curr_plate()
+{
+    if (!m_valid)
+        return;
+
+    PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+    if (!plate || plate->empty())
+        return;
+
+    // The objects to keep are the ones selected right now; collect them before
+    // the selection is rebuilt below.
+    std::set<int> keep;
+    for (const auto& obj : m_cache.content) {
+        keep.insert(obj.first);
+    }
+    if (keep.empty())
+        return;
+
+    // Everything else that lives on this plate is what gets deleted.
+    std::vector<int> others;
+    for (int obj_idx = 0; obj_idx < (int) m_model->objects.size(); obj_idx++) {
+        if (keep.count(obj_idx) > 0)
+            continue;
+        if (!plate->contain_instance(obj_idx, 0))
+            continue;
+        others.push_back(obj_idx);
+    }
+    if (others.empty())
+        return;
+
+    // Snapshot before touching the selection, so undo restores what the user had selected.
+    wxGetApp().plater()->take_snapshot(std::string("Remove All Other Objects"));
+    m_mode = Instance;
+    clear();
+
+    for (int obj_idx : others) {
+        std::vector<unsigned int> volume_idxs = get_volume_idxs_from_object(obj_idx);
+        do_add_volumes(volume_idxs);
+    }
+
+    update_type();
+    this->set_bounding_boxes_dirty();
+
+    erase();
+}
+
 void Selection::clone(int numbers)
 {
     if (numbers <= 0)

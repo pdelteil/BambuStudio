@@ -3933,16 +3933,40 @@ void StatusPanel::update_ams(MachineObject *obj)
 
     update_filament_loading_panel(obj);
 
+    // BBS: while a slot is actively feeding, the loading spinner follows that slot rather than
+    // tray_reading_bits. On AMS Lite the reading bitmask has been observed pointing at a different
+    // slot of the same unit than the one being consumed (slot 2 feeding reported as bit 3), which
+    // put the spinner on the wrong roll while the filament path - driven by GetSlotNow() - was
+    // correct. GetSlotNow() is the same source the path uses, so the two now agree by construction.
+    std::set<std::pair<std::string, std::string>> feeding_slots;
+    for (int extruder_id : {MAIN_EXTRUDER_ID, DEPUTY_EXTRUDER_ID}) {
+        if (auto ext = obj->GetExtderSystem()->GetExtderById(extruder_id); ext.has_value() && ext->HasFilamentInExt()) {
+            const auto &slot = ext->GetSlotNow();
+            if (!slot.ams_id.empty() && !slot.slot_id.empty())
+                feeding_slots.insert({slot.ams_id, slot.slot_id});
+        }
+    }
+
     const auto &amslist = obj->GetFilaSystem()->GetAmsList();
     for (auto ams_it = amslist.begin(); ams_it != amslist.end(); ams_it++) {
         std::string ams_id = ams_it->first;
         try {
             int ams_id_int = atoi(ams_id.c_str());
+            // Is some slot of *this* unit feeding? Only then do we override the bitmask, so that
+            // idle units keep showing genuine RFID reads.
+            const bool ams_is_feeding = std::any_of(feeding_slots.begin(), feeding_slots.end(),
+                                                    [&ams_id](const auto &s) { return s.first == ams_id; });
             for (auto tray_it = ams_it->second->GetTrays().begin(); tray_it != ams_it->second->GetTrays().end(); tray_it++) {
                 std::string tray_id     = tray_it->first;
                 int         tray_id_int = atoi(tray_id.c_str());
                 // new protocol
-                if (ams_id_int < 128) {
+                if (ams_is_feeding) {
+                    if (feeding_slots.count({ams_id, tray_id}) > 0) {
+                        m_ams_control->PlayRridLoading(ams_id, tray_id);
+                    } else {
+                        m_ams_control->StopRridLoading(ams_id, tray_id);
+                    }
+                } else if (ams_id_int < 128) {
                     if ((ams_it->second->GetAmsType() == DevAmsType::AMS_LITE && ams_it->second->IsAmsLiteMixed()) && ((obj->tray_reading_bits & (1 << (24 + tray_id_int))) == 0)) {
                         m_ams_control->StopRridLoading(ams_id, tray_id);
                     } else if ((obj->tray_reading_bits & (1 << (ams_id_int * 4 + tray_id_int))) == 0) {

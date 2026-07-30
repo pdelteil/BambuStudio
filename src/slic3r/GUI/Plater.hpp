@@ -476,6 +476,8 @@ public:
     //BBS
     void select_curr_plate_all();
     void remove_curr_plate_all();
+    // Delete every object on the current plate except the selected one(s).
+    void remove_others_on_curr_plate();
 
     void select_all();
     void deselect_all();
@@ -514,6 +516,9 @@ public:
     // Export a one-page PDF "print settings card" (traveler / QA card) for the
     // current plate: key settings, results and a quality-inspection sign-off box.
     void export_print_settings_pdf();
+    // Re-slice the current plate once per layer height, holding every other
+    // process setting constant, then export the comparison as a PDF table.
+    void compare_layer_heights();
     static TriangleMesh combine_mesh_fff(const ModelObject& mo, int instance_id, std::function<void(const std::string&)> notify_func = {});
     void export_stl(bool extended = false, bool selection_only = false, bool multi_stls = false);
     //BBS: remove amf

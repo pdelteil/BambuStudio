@@ -745,6 +745,32 @@ void ArrangeJob::finalize()
         // Unprintable items go to the last virtual bed
         int beds = 0;
 
+        //BBS: "Do not use extra plates". The arranger packs into as many beds as it
+        // needs; here anything it placed past the plates that already exist is sent
+        // to the virtual plate instead, so no new plate gets created. Done before
+        // the bed indices below are turned into plates. Not relevant when arranging
+        // a single plate, which never spills anyway.
+        // bed_idx -1 is the documented "cannot be arranged inside a plate" value:
+        // postprocess_bed_index_for_selected() returns early on it, which is what
+        // keeps create_plate() from running, and postprocess_arrange_polygon()
+        // then parks the item on the virtual plate the same way unprintable
+        // objects are handled.
+        if (params.avoid_extra_plates && !only_on_partplate) {
+            const int existing_plates = static_cast<int>(plate_list.get_plate_count());
+            int       moved_out       = 0;
+            for (ArrangePolygon &ap : m_selected) {
+                if (ap.bed_idx >= existing_plates) {
+                    ap.bed_idx = -1;
+                    ++moved_out;
+                }
+            }
+            if (moved_out > 0)
+                ARRANGE_LOG(info) << __FUNCTION__
+                                  << boost::format(": avoid_extra_plates, %1% object(s) did not fit on the %2% existing "
+                                                   "plate(s) and were left on the virtual plate")
+                                         % moved_out % existing_plates;
+        }
+
         //clear all the relations before apply the arrangement results
         if (only_on_partplate) {
             plate_list.clear(false, false, true, current_plate_index);
@@ -922,6 +948,7 @@ arrangement::ArrangeParams init_arrange_params(Plater *p)
     params.is_seq_print                        = settings.is_seq_print;
     params.min_obj_distance                    = scaled(settings.distance);
     params.align_to_y_axis                     = settings.align_to_y_axis;
+    params.avoid_extra_plates                  = settings.avoid_extra_plates;
 #if !BBL_RELEASE_TO_PUBLIC
     params.save_svg                            = settings.save_svg;
 #endif

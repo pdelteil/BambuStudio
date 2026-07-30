@@ -567,6 +567,9 @@ public:
         //BBS: add more arrangeSettings
         bool is_seq_print        = false;
         bool  align_to_y_axis    = false;
+        //BBS: keep the arrangement on the plates that already exist instead of
+        // adding new ones. What does not fit is left on the virtual plate.
+        bool  avoid_extra_plates = false;
         bool        save_svg            = false; // for debug
         std::string postfix;
         void        reset()
@@ -578,6 +581,7 @@ public:
             avoid_extrusion_cali_region         = true;
             is_seq_print                        = false;
             align_to_y_axis                     = false;
+            avoid_extra_plates                  = false;
         }
     };
 
@@ -1076,6 +1080,7 @@ public:
     void select_curr_plate_all();
     void select_object_from_idx(std::vector<int>& object_idxs);
     void remove_curr_plate_all();
+    void remove_others_on_curr_plate();
 
     void select_all();
     void deselect_all();

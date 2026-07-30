@@ -1324,6 +1324,8 @@ void MenuFactory::create_object_menu()
 void MenuFactory::create_bbl_object_menu()
 {
     append_menu_item_fill_bed(&m_object_menu);
+    // Keep only the selection, drop the rest of the plate
+    append_menu_item_remove_other_objects(&m_object_menu);
     // Object Clone
     append_menu_item_clone(&m_object_menu);
     // Object Repair
@@ -1664,6 +1666,14 @@ void MenuFactory::create_plate_menu()
     append_menu_item(
         menu, wxID_ANY, _L("Export print settings (PDF)"), _L("Export a one-page PDF card of this plate's print settings and results"),
         [](wxCommandEvent&) { plater()->export_print_settings_pdf(); },
+        "", nullptr,
+        []() { return !plater()->get_partplate_list().get_selected_plate()->get_objects().empty(); }, m_parent);
+
+    // re-slice this plate at several layer heights and export the comparison
+    append_menu_item(
+        menu, wxID_ANY, _L("Compare layer heights (PDF)"),
+        _L("Re-slice this plate at each layer height and export a PDF comparing time and filament"),
+        [](wxCommandEvent&) { plater()->compare_layer_heights(); },
         "", nullptr,
         []() { return !plater()->get_partplate_list().get_selected_plate()->get_objects().empty(); }, m_parent);
 
@@ -2513,6 +2523,19 @@ void MenuFactory::append_menu_item_fill_bed(wxMenu *menu)
     append_menu_item(
         menu, wxID_ANY, _L("Fill bed with copies"), _L("Fill the remaining area of bed with copies of the selected object"),
         [](wxCommandEvent &) { plater()->fill_bed_with_instances(); }, "", nullptr, []() { return plater()->can_increase_instances(); }, m_parent);
+}
+
+void MenuFactory::append_menu_item_remove_other_objects(wxMenu *menu)
+{
+    append_menu_item(
+        menu, wxID_ANY, _L("Remove all other objects"), _L("Delete every other object on this plate, keeping only the selected one"),
+        [](wxCommandEvent &) { plater()->remove_others_on_curr_plate(); }, "", nullptr,
+        []() {
+            PartPlate *plate = plater()->get_partplate_list().get_curr_plate();
+            /*only worth offering when there is something else on the plate to remove*/
+            return plate && plate->get_objects_on_this_plate().size() > 1;
+        },
+        m_parent);
 }
 
 void MenuFactory::append_menu_item_plate_name(wxMenu *menu)

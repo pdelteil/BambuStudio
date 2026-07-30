@@ -134,6 +134,11 @@ struct ArrangeParams {
     bool  avoid_extrusion_cali_region         = true;
     bool  is_seq_print                        = false;
     bool  align_to_y_axis                     = false;
+    //BBS: do not let the arrangement grow onto plates that do not exist yet.
+    // Enforced when the result is applied (ArrangeJob), not while packing:
+    // anything the arranger put beyond the existing plates is sent to the
+    // virtual plate instead of causing a new one to be created.
+    bool  avoid_extra_plates                  = false;
     bool  save_svg                            = false;
     bool  plate_has_tree_support              = false;
     double brim_max                            = 0;

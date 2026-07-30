@@ -1394,6 +1394,16 @@ void GLCanvas3D::load_arrange_settings()
     if (!en_rot_sla_str.empty())
         m_arrange_settings_sla.enable_rotation = (en_rot_sla_str == "1" || en_rot_sla_str == "yes");
 
+    //BBS: keep the arrangement on the existing plates. One shared preference for
+    // all three settings sets, it is a plate-count policy rather than a packing
+    // parameter.
+    if (const std::string s = wxGetApp().app_config->get("arrange", "avoid_extra_plates"); !s.empty()) {
+        const bool avoid = (s == "1" || s == "yes");
+        m_arrange_settings_fff.avoid_extra_plates           = avoid;
+        m_arrange_settings_fff_seq_print.avoid_extra_plates = avoid;
+        m_arrange_settings_sla.avoid_extra_plates           = avoid;
+    }
+
     //BBS: add specific arrange settings
     m_arrange_settings_fff_seq_print.is_seq_print = true;
 }
@@ -3151,6 +3161,12 @@ void GLCanvas3D::select_object_from_idx(std::vector<int>& object_idxs) {
 void GLCanvas3D::remove_curr_plate_all()
 {
     m_selection.remove_curr_plate();
+    m_dirty = true;
+}
+
+void GLCanvas3D::remove_others_on_curr_plate()
+{
+    m_selection.remove_others_on_curr_plate();
     m_dirty = true;
 }
 
@@ -7244,6 +7260,7 @@ bool GLCanvas3D::_render_arrange_menu(float left, float toolbar_height)
     std::string multi_material_key = "allow_multi_materials_on_same_plate";
     std::string avoid_extrusion_key = "avoid_extrusion_cali_region";
     std::string align_to_y_axis_key = "align_to_y_axis";
+    std::string avoid_extra_plates_key = "avoid_extra_plates";
     std::string save_svg_key        = "save_svg";
     std::string postfix             = settings.postfix;
     //BBS:
@@ -7290,6 +7307,15 @@ bool GLCanvas3D::_render_arrange_menu(float left, float toolbar_height)
         appcfg->set("arrange", multi_material_key.c_str(), settings_out.allow_multi_materials_on_same_plate ? "1" : "0");
         settings_changed = true;
     }
+
+    //BBS: keep everything on the plates that already exist
+    if (imgui->bbl_checkbox(_L("Do not use extra plates"), settings.avoid_extra_plates)) {
+        settings_out.avoid_extra_plates = settings.avoid_extra_plates;
+        appcfg->set("arrange", avoid_extra_plates_key.c_str(), settings_out.avoid_extra_plates ? "1" : "0");
+        settings_changed = true;
+    }
+    if (settings.avoid_extra_plates)
+        imgui->text(_L("Objects that do not fit stay on the virtual plate."));
 
     // only show this option if the printer has micro Lidar and can do first layer scan
     DynamicPrintConfig &current_config = wxGetApp().preset_bundle->printers.get_edited_preset().config;

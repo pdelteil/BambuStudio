@@ -43,6 +43,7 @@
 #include <wx/gauge.h>
 #include <wx/wupdlock.h>
 #include <wx/numdlg.h>
+#include <wx/choicdlg.h>
 #include <wx/debug.h>
 #include <wx/busyinfo.h>
 #include <wx/event.h>
@@ -6415,6 +6416,27 @@ public:
     int m_cur_slice_plate;
     //BBS: m_slice_all in .gcode.3mf file case, set true when slice all
     bool m_slice_all_only_has_gcode{ false };
+    // Layer-height sweep: re-slices the current plate once per layer height and
+    // collects each estimate, then restores the layer height it started with.
+    // Driven from on_process_completed(), one height per completion event.
+    struct LayerHeightSweep
+    {
+        bool                                  active = false;
+        std::vector<double>                   heights;
+        size_t                                index = 0;
+        double                                original_layer_height = 0.0;
+        int                                   plate_index = 0;
+        bool                                  restoring = false;
+        std::vector<GUI::LayerHeightSweepRow>  rows;
+        // Raw seconds per row (0 when that height failed), kept so the report can
+        // express each height as a percentage of the starting height's time.
+        std::vector<float>                    times;
+    };
+    LayerHeightSweep m_lh_sweep;
+    // Records the finished slice and either starts the next height or wraps up.
+    void advance_layer_height_sweep(bool success, bool cancelled);
+    void apply_sweep_layer_height(double h);
+    void finish_layer_height_sweep(bool cancelled);
     // The post-processing script prompt choice is remembered until the current project is closed.
     std::optional<bool> m_post_process_script_skip_choice;
     // Which means "This moment is during the popup display period".
@@ -6704,6 +6726,7 @@ public:
     // BBS
     void select_curr_plate_all();
     void remove_curr_plate_all();
+    void remove_others_on_curr_plate();
 
     void select_all();
     void deselect_all();
@@ -10254,6 +10277,13 @@ void Plater::priv::remove_curr_plate_all()
     this->sidebar->obj_list()->update_selections();
 }
 
+void Plater::priv::remove_others_on_curr_plate()
+{
+    SingleSnapshot ss(q);
+    view3D->remove_others_on_curr_plate();
+    this->sidebar->obj_list()->update_selections();
+}
+
 void Plater::priv::select_all()
 {
     view3D->select_all();
@@ -12689,6 +12719,25 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
 
     // mesh stats per plate + GPU/OpenGL info
     if (!has_error && !evt.cancelled() && evt.success()) {
+        //BBS: remember this slice's totals so the preview can show the change
+        // against the previous slice of the same plate.
+        if (!this->background_process.empty()) {
+            if (PartPlate *sliced_plate = this->background_process.get_current_plate()) {
+                PartPlate::SliceStats st;
+                if (const GCodeProcessorResult *res = sliced_plate->get_slice_result();
+                    res != nullptr && !res->print_statistics.modes.empty()) {
+                    st.total_time = res->print_statistics.modes[0].time;
+                    for (const auto &rt : res->print_statistics.modes[0].roles_times)
+                        st.role_times.push_back({ static_cast<int>(rt.first), rt.second });
+                }
+                const PrintStatistics &ps = this->partplate_list.get_current_fff_print().print_statistics();
+                st.total_weight   = ps.total_weight;
+                st.total_filament = ps.total_used_filament;
+                st.total_cost     = ps.total_cost;
+                st.valid          = st.total_time > 0.0;
+                sliced_plate->record_slice_stats(st);
+            }
+        }
         track_slice_mesh_stat();
         // Re-push warnings from completed PrintObject steps that were not re-run
         // but whose UI notifications were cleared by on_slicing_began().
@@ -12857,6 +12906,12 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
             }
         }
     }
+
+    // Layer-height sweep: record this height's result and start the next one.
+    // Runs last so the normal per-slice bookkeeping above has already happened.
+    if (m_lh_sweep.active)
+        advance_layer_height_sweep(evt.success(), evt.cancelled());
+
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(", exit.");
 }
 
@@ -21046,6 +21101,7 @@ void                  Plater::reset_window_layout(int width) { p->reset_window_l
 //BBS
 void Plater::select_curr_plate_all() { p->select_curr_plate_all(); }
 void Plater::remove_curr_plate_all() { p->remove_curr_plate_all(); }
+void Plater::remove_others_on_curr_plate() { p->remove_others_on_curr_plate(); }
 
 void Plater::select_all() { p->select_all(); }
 void Plater::deselect_all() { p->deselect_all(); }
@@ -21683,6 +21739,28 @@ void Plater::export_print_settings_pdf()
     if (opt_present("sparse_infill_pattern"))
         card.sparse_infill_pattern = enum_label("sparse_infill_pattern", config.option("sparse_infill_pattern")->getInt());
 
+    // Line widths. A per-feature width of zero means "use the default line width"
+    // (see the line_width tooltip), so resolve those to the width actually used.
+    {
+        const double default_w = opt_present("line_width") ? config.opt_float("line_width") : 0.0;
+        auto width_str = [&](const std::string &key) -> std::string {
+            if (!opt_present(key))
+                return std::string();
+            const double w = config.opt_float(key);
+            const double effective = (w > 0.0) ? w : default_w;
+            return effective > 0.0 ? fmt("%.2f mm", effective) : std::string();
+        };
+        if (default_w > 0.0)
+            card.line_width_default = fmt("%.2f mm", default_w);
+        card.line_width_initial_layer         = width_str("initial_layer_line_width");
+        card.line_width_outer_wall            = width_str("outer_wall_line_width");
+        card.line_width_inner_wall            = width_str("inner_wall_line_width");
+        card.line_width_top_surface           = width_str("top_surface_line_width");
+        card.line_width_sparse_infill         = width_str("sparse_infill_line_width");
+        card.line_width_internal_solid_infill = width_str("internal_solid_infill_line_width");
+        card.line_width_support               = width_str("support_line_width");
+    }
+
     // Variable layer height: detected from per-object custom layering, not a config key.
     {
         bool   has_vlh = false;
@@ -21703,16 +21781,39 @@ void Plater::export_print_settings_pdf()
             card.variable_layer_height_range = fmt("%.2f", vmin) + " - " + fmt("%.2f mm", vmax);
     }
 
-    // Ironing: enabled when ironing_type != "no ironing" (enum index 0).
+    // Ironing: enabled when ironing_type != "no ironing" (enum index 0). The
+    // parameters are reported whether or not ironing is on, since the card
+    // documents the settings the plate was sliced with.
     if (opt_present("ironing_type")) {
         const int iron = config.option("ironing_type")->getInt();
-        card.ironing = (iron != 0);
-        if (card.ironing) {
-            card.ironing_type = enum_label("ironing_type", iron);
-            if (opt_present("ironing_flow"))    card.ironing_flow    = fmt("%.0f %%", config.option("ironing_flow")->getFloat());
-            if (opt_present("ironing_spacing")) card.ironing_spacing = fmt("%.2f mm", config.opt_float("ironing_spacing"));
-            if (opt_present("ironing_speed"))   card.ironing_speed   = fmt("%.0f mm/s", config.opt_float("ironing_speed"));
-        }
+        card.ironing      = (iron != 0);
+        card.ironing_type = enum_label("ironing_type", iron);
+    }
+    if (opt_present("ironing_pattern"))
+        card.ironing_pattern = enum_label("ironing_pattern", config.option("ironing_pattern")->getInt());
+    if (opt_present("ironing_flow"))      card.ironing_flow      = fmt("%.0f %%", config.option("ironing_flow")->getFloat());
+    if (opt_present("ironing_spacing"))   card.ironing_spacing   = fmt("%.2f mm", config.opt_float("ironing_spacing"));
+    if (opt_present("ironing_speed"))     card.ironing_speed     = fmt("%.0f mm/s", config.opt_float("ironing_speed"));
+    if (opt_present("ironing_direction")) card.ironing_direction = fmt("%.0f deg", config.opt_float("ironing_direction"));
+    if (opt_present("ironing_inset")) {
+        // Zero means "trim by half the nozzle diameter" (see Layer::make_ironing).
+        const double inset = config.opt_float("ironing_inset");
+        card.ironing_inset = inset == 0.0 ? std::string("auto (half nozzle)") : fmt("%.2f mm", inset);
+    }
+    if (opt_present("ironing_skip_layer_start") && opt_present("ironing_skip_layer_end")) {
+        const int from = config.opt_int("ironing_skip_layer_start");
+        const int to   = config.opt_int("ironing_skip_layer_end");
+        // fmt() takes a single double, so build these by hand.
+        const std::string from_s = std::to_string(from);
+        const std::string to_s   = std::to_string(to);
+        if (from <= 0 && to <= 0)
+            card.ironing_skip_layers = "none";
+        else if (from > 0 && to > 0)
+            card.ironing_skip_layers = from_s + " - " + to_s + (to < from ? " (ignored)" : "");
+        else if (from > 0)
+            card.ironing_skip_layers = from_s + " - top";
+        else
+            card.ironing_skip_layers = "1 - " + to_s;
     }
 
     // --- Results (available after slicing) -----------------------------------
@@ -21776,6 +21877,275 @@ void Plater::export_print_settings_pdf()
         MessageDialog(this, _L("Failed to export the print settings PDF."),
                       _L("Export print settings"), wxOK | wxICON_ERROR).ShowModal();
     }
+}
+
+// Dump a plate's RGBA thumbnail to a temporary PNG. Returns an empty string if
+// the plate has no valid thumbnail yet.
+static std::string dump_plate_thumbnail_png(PartPlate *plate, const std::string &stem)
+{
+    if (!plate)
+        return std::string();
+    const ThumbnailData &td = plate->thumbnail_data;
+    if (!td.is_valid())
+        return std::string();
+    wxImage image(td.width, td.height);
+    image.InitAlpha();
+    for (unsigned int r = 0; r < td.height; ++r) {
+        const unsigned int rr = (td.height - 1 - r) * td.width; // stored bottom-up
+        for (unsigned int c = 0; c < td.width; ++c) {
+            const unsigned char *px = td.pixels.data() + 4 * (rr + c);
+            image.SetRGB((int) c, (int) r, px[0], px[1], px[2]);
+            image.SetAlpha((int) c, (int) r, px[3]);
+        }
+    }
+    const std::string path = (boost::filesystem::path(data_dir()) / (stem + ".png")).string();
+    return image.SaveFile(from_u8(path), wxBITMAP_TYPE_PNG) ? path : std::string();
+}
+
+void Plater::compare_layer_heights()
+{
+    PartPlateList &plate_list = get_partplate_list();
+    PartPlate     *plate      = plate_list.get_curr_plate();
+    const wxString caption    = _L("Compare layer heights");
+
+    if (!plate || !plate->has_printable_instances()) {
+        MessageDialog(this, _L("There is nothing printable on this plate."), caption,
+                      wxOK | wxICON_INFORMATION).ShowModal();
+        return;
+    }
+    if (p->m_is_slicing || p->background_process.running()) {
+        MessageDialog(this, _L("Slicing is already in progress. Wait for it to finish and try again."),
+                      caption, wxOK | wxICON_INFORMATION).ShowModal();
+        return;
+    }
+    // Switching the layer height edits the process preset, which would discard
+    // unsaved modifications, so refuse to start until they are dealt with.
+    if (wxGetApp().preset_bundle->prints.current_is_dirty()) {
+        MessageDialog(this,
+                      _L("The process preset has unsaved changes. Save or discard them before comparing layer heights."),
+                      caption, wxOK | wxICON_WARNING).ShowModal();
+        return;
+    }
+
+    const DynamicPrintConfig &config = wxGetApp().preset_bundle->prints.get_edited_preset().config;
+    const double current_h = config.option("layer_height") ? config.opt_float("layer_height") : 0.2;
+
+    const DynamicPrintConfig &full = wxGetApp().preset_bundle->full_config();
+    const double nozzle = full.option("nozzle_diameter") ? full.opt_float("nozzle_diameter", 0) : 0.4;
+
+    // Candidate ladder, bounded by what the nozzle can actually lay down.
+    const double lo = 0.25 * nozzle, hi = 0.75 * nozzle;
+    std::vector<double> candidates;
+    for (int i = 1; i <= 40; ++i) {
+        const double h = 0.04 * i;
+        if (h >= lo - 1e-6 && h <= hi + 1e-6)
+            candidates.push_back(h);
+    }
+    if (std::none_of(candidates.begin(), candidates.end(),
+                     [current_h](double h) { return std::abs(h - current_h) < 1e-6; }))
+        candidates.push_back(current_h);
+    std::sort(candidates.begin(), candidates.end());
+    if (candidates.empty()) {
+        MessageDialog(this, _L("No usable layer heights for this nozzle."), caption,
+                      wxOK | wxICON_INFORMATION).ShowModal();
+        return;
+    }
+
+    // --- Let the user trim the list: each entry is a full slice ---------------
+    wxArrayString labels;
+    for (double h : candidates) {
+        wxString s = wxString::Format("%.2f mm", h);
+        if (std::abs(h - current_h) < 1e-6)
+            s += _L("  (current)");
+        labels.Add(s);
+    }
+    wxMultiChoiceDialog choice(this,
+        wxString::Format(_L("Each layer height is a full slice of this plate (%d printable objects).\n"
+                            "Pick the heights to compare - fewer heights finish sooner."),
+                         plate->printable_instance_size()),
+        caption, labels);
+    {
+        wxArrayInt preselect;
+        for (size_t i = 0; i < candidates.size(); ++i)
+            preselect.Add((int) i);
+        choice.SetSelections(preselect);
+    }
+    if (choice.ShowModal() != wxID_OK)
+        return;
+    const wxArrayInt picked = choice.GetSelections();
+    if (picked.IsEmpty())
+        return;
+
+    p->m_lh_sweep = priv::LayerHeightSweep();
+    for (size_t i = 0; i < picked.GetCount(); ++i)
+        p->m_lh_sweep.heights.push_back(candidates[picked[i]]);
+    std::sort(p->m_lh_sweep.heights.begin(), p->m_lh_sweep.heights.end());
+    p->m_lh_sweep.active                = true;
+    p->m_lh_sweep.index                 = 0;
+    p->m_lh_sweep.original_layer_height = current_h;
+    p->m_lh_sweep.plate_index           = plate_list.get_curr_plate_index();
+
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": starting sweep over %1% layer heights, original %2%")
+                                   % p->m_lh_sweep.heights.size() % current_h;
+
+    p->notification_manager->push_notification(
+        into_u8(wxString::Format(_L("Comparing layer heights: 1 / %d"), (int) p->m_lh_sweep.heights.size())));
+    p->apply_sweep_layer_height(p->m_lh_sweep.heights.front());
+}
+
+void Plater::priv::apply_sweep_layer_height(double h)
+{
+    DynamicPrintConfig *print_config = &wxGetApp().preset_bundle->prints.get_edited_preset().config;
+    print_config->set_key_value("layer_height", new ConfigOptionFloat(h));
+    if (Tab *tab = wxGetApp().get_tab(Preset::TYPE_PRINT)) {
+        tab->update_dirty();
+        tab->reload_config();
+    }
+    q->on_config_change(*print_config);
+
+    unsigned int state = update_background_process(true, false, false);
+    if (state & priv::UPDATE_BACKGROUND_PROCESS_REFRESH_SCENE)
+        view3D->reload_scene(false);
+    if (!restart_background_process(state | priv::UPDATE_BACKGROUND_PROCESS_FORCE_RESTART)) {
+        // Nothing to slice: post a completion so the chain still advances.
+        SlicingProcessCompletedEvent evt(EVT_PROCESS_COMPLETED, 0, SlicingProcessCompletedEvent::Finished, nullptr);
+        wxQueueEvent(q, evt.Clone());
+    }
+}
+
+void Plater::priv::advance_layer_height_sweep(bool success, bool cancelled)
+{
+    // The restoring slice at the end is not part of the comparison.
+    if (m_lh_sweep.restoring) {
+        m_lh_sweep = LayerHeightSweep();
+        return;
+    }
+    if (cancelled) {
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": layer height sweep cancelled by the user";
+        finish_layer_height_sweep(true);
+        return;
+    }
+
+    const double h = m_lh_sweep.heights[m_lh_sweep.index];
+    GUI::LayerHeightSweepRow row;
+    row.layer_height = (boost::format("%.2f mm") % h).str();
+    row.is_current   = std::abs(h - m_lh_sweep.original_layer_height) < 1e-6;
+
+    PartPlate *plate = partplate_list.get_curr_plate();
+    float      t     = 0.0f;
+    if (success && plate) {
+        if (const GCodeProcessorResult *gres = plate->get_slice_result();
+            gres != nullptr && !gres->print_statistics.modes.empty())
+            t = gres->print_statistics.modes[0].time;
+    }
+    if (!success || t <= 0.0f) {
+        row.failed = true;
+    } else {
+        row.print_time = short_time(get_time_dhms(t));
+        try {
+            const PrintStatistics &ps = partplate_list.get_current_fff_print().print_statistics();
+            if (ps.total_weight > 0.0)
+                row.filament_grams = (boost::format("%.2f g") % ps.total_weight).str();
+            if (ps.total_used_filament > 0.0)
+                row.filament_length = (boost::format("%.2f m") % (ps.total_used_filament / 1000.0)).str();
+        } catch (...) {
+            // Statistics unavailable: leave the filament columns empty.
+        }
+        const int n = plate ? plate->printable_instance_size() : 0;
+        if (n > 1) {
+            row.objects         = std::to_string(n);
+            row.time_per_object = short_time(get_time_dhms(t / (float) n));
+        }
+    }
+    m_lh_sweep.rows.push_back(row);
+    m_lh_sweep.times.push_back(row.failed ? 0.0f : t);
+
+    ++m_lh_sweep.index;
+    if (m_lh_sweep.index < m_lh_sweep.heights.size()) {
+        notification_manager->push_notification(
+            into_u8(wxString::Format(_L("Comparing layer heights: %d / %d"),
+                                     (int) m_lh_sweep.index + 1, (int) m_lh_sweep.heights.size())));
+        apply_sweep_layer_height(m_lh_sweep.heights[m_lh_sweep.index]);
+        return;
+    }
+    finish_layer_height_sweep(false);
+}
+
+void Plater::priv::finish_layer_height_sweep(bool cancelled)
+{
+    std::vector<GUI::LayerHeightSweepRow> rows = m_lh_sweep.rows;
+    const double original_h = m_lh_sweep.original_layer_height;
+    const int    plate_idx  = m_lh_sweep.plate_index;
+
+    // Express each height as a time delta against the height the plate started
+    // on, which is the number the comparison actually exists to answer.
+    {
+        float base = 0.0f;
+        for (size_t i = 0; i < rows.size() && i < m_lh_sweep.times.size(); ++i)
+            if (rows[i].is_current && m_lh_sweep.times[i] > 0.0f)
+                base = m_lh_sweep.times[i];
+        if (base > 0.0f) {
+            for (size_t i = 0; i < rows.size() && i < m_lh_sweep.times.size(); ++i) {
+                const float ti = m_lh_sweep.times[i];
+                if (ti <= 0.0f)
+                    continue;
+                if (rows[i].is_current)
+                    rows[i].delta_vs_current = "baseline";
+                else
+                    rows[i].delta_vs_current = (boost::format("%+.0f %%") % (100.0 * (ti - base) / base)).str();
+            }
+        }
+    }
+
+    if (cancelled || rows.empty()) {
+        // Put the original layer height back and leave the plate sliced with it.
+        m_lh_sweep.restoring = true;
+        apply_sweep_layer_height(original_h);
+        return;
+    }
+
+    GUI::LayerHeightSweepData data;
+    data.title           = into_u8(q->get_project_name());
+    data.date            = into_u8(wxDateTime::Now().FormatISODate());
+    PresetBundle *pb     = wxGetApp().preset_bundle;
+    data.printer_preset  = pb->printers.get_selected_preset_name();
+    data.process_preset  = pb->prints.get_selected_preset_name();
+    data.filament_preset = pb->filaments.get_selected_preset_name();
+    {
+        const DynamicPrintConfig &full = pb->full_config();
+        if (full.option("nozzle_diameter"))
+            data.nozzle_diameter = (boost::format("%.1f mm") % full.opt_float("nozzle_diameter", 0)).str();
+    }
+    data.plate_index = plate_idx + 1;
+    data.rows        = rows;
+
+    const std::string tmp_png = dump_plate_thumbnail_png(partplate_list.get_curr_plate(), "layer_height_sweep_thumb");
+    data.thumbnail_path = tmp_png;
+
+    // Restore the original layer height before the (modal) save dialog, so the
+    // project is never left on a height the user did not choose.
+    m_lh_sweep.restoring = true;
+    apply_sweep_layer_height(original_h);
+
+    std::string base = data.title.empty() ? std::string("layer_heights") : data.title;
+    for (char &ch : base) if (ch == '/' || ch == '\\' || ch == ':') ch = '_';
+    const wxString default_name = from_u8(base + "_plate" + std::to_string(data.plate_index) + "_layer_heights.pdf");
+    wxFileDialog dlg(q, _L("Export layer height comparison"),
+                     from_u8(wxGetApp().app_config->get_last_dir()), default_name,
+                     "PDF files (*.pdf)|*.pdf", wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+    if (dlg.ShowModal() != wxID_OK) {
+        if (!tmp_png.empty()) { boost::system::error_code ec; boost::filesystem::remove(tmp_png, ec); }
+        return;
+    }
+    const std::string out_path = into_u8(dlg.GetPath());
+    const bool ok = GUI::build_layer_height_sweep_pdf(out_path, data);
+    if (!tmp_png.empty()) { boost::system::error_code ec; boost::filesystem::remove(tmp_png, ec); }
+
+    if (ok)
+        wxGetApp().app_config->update_skein_dir(into_u8(dlg.GetDirectory()));
+    else
+        MessageDialog(q, _L("Failed to export the layer height comparison PDF."),
+                      _L("Compare layer heights"), wxOK | wxICON_ERROR).ShowModal();
 }
 
 Preset *get_printer_preset(const MachineObject *obj)

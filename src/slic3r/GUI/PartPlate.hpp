@@ -109,6 +109,34 @@ private:
     std::unique_ptr<HelioPlateResult> m_helio_result;
     float m_slice_percent;
 
+public:
+    //BBS: totals of one completed slice of this plate. Two of them are kept so
+    // the preview can show how the current result compares with the one before
+    // it, which is what you want when tuning a setting and re-slicing.
+    struct SliceStats
+    {
+        bool   valid          = false;
+        double total_time     = 0.0;   // seconds, normal time mode
+        double total_weight   = 0.0;   // grams
+        double total_filament = 0.0;   // as reported by PrintStatistics
+        double total_cost     = 0.0;
+        // Seconds per extrusion role, keyed by ExtrusionRole as int so this
+        // header does not need the extrusion entity types.
+        std::vector<std::pair<int, double>> role_times;
+
+        double time_of_role(int role) const
+        {
+            for (const auto &rt : role_times)
+                if (rt.first == role)
+                    return rt.second;
+            return 0.0;
+        }
+    };
+
+private:
+    SliceStats m_last_slice_stats;
+    SliceStats m_prev_slice_stats;
+
     Print *m_print; //Print reference, not own it, no need to serialize
     GCodeProcessorResult *m_gcode_result;
     std::vector<FilamentInfo> slice_filaments_info;
@@ -515,6 +543,13 @@ public:
     Print* fff_print() { return m_print; }
     //return the slice result
     GCodeProcessorResult* get_slice_result() { return m_gcode_result; }
+
+    //BBS: roll the recorded slice totals - the last slice becomes the previous one.
+    // Identical totals are ignored so the comparison keeps pointing at the last
+    // result that actually differed.
+    void              record_slice_stats(const SliceStats &stats);
+    const SliceStats &get_last_slice_stats() const { return m_last_slice_stats; }
+    const SliceStats &get_prev_slice_stats() const { return m_prev_slice_stats; }
 
     std::string           get_tmp_gcode_path();
     std::string           get_temp_config_3mf_path();

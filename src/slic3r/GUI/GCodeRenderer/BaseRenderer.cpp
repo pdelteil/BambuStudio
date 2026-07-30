@@ -1456,6 +1456,17 @@ namespace Slic3r
                 /*bool show_estimated_time = time_mode.time > 0.0f && (m_view_type == EViewType::FeatureType ||
                     (m_view_type == EViewType::ColorPrint && !time_mode.custom_gcode_times.empty()));*/
                 bool show_estimated = time_mode.time > 0.0f && (m_view_type == EViewType::FeatureType || m_view_type == EViewType::ColorPrint);
+                // BBS: number of printable instances on the current plate, used to divide the plate
+                // totals into per-object figures in the Summary and Total Estimation sections below.
+                // Only meaningful for a plate of identical copies: shared overhead (skirt, brim,
+                // prime tower, prepare time) is spread evenly over every object.
+                int printable_objects = 0;
+                if (!m_only_gcode_in_preview) {
+                    if (auto* plater = wxGetApp().plater(); plater != nullptr) {
+                        if (PartPlate* curr_plate = plater->get_partplate_list().get_curr_plate(); curr_plate != nullptr)
+                            printable_objects = curr_plate->printable_instance_size();
+                    }
+                }
                 const float icon_size = ImGui::GetTextLineHeight() * 0.7;
                 //BBS GUI refactor
                 //const float percent_bar_size = 2.0f * ImGui::GetTextLineHeight();
@@ -1474,7 +1485,11 @@ namespace Slic3r
                     const std::vector<std::pair<std::string, float>>& columns_offsets,
                     bool checkbox = true,
                     bool visible = true,
-                    std::function<void()> callback = nullptr)
+                    std::function<void()> callback = nullptr,
+                    //BBS: per-column change marker for the before/after comparison,
+                    // aligned with columns_offsets: 0 none, -1 decreased (green
+                    // background, arrow down), +1 increased (red, arrow up).
+                    const std::vector<int> *marks = nullptr)
                     {
                         // render icon
                         ImVec2 pos = ImVec2(ImGui::GetCursorScreenPos().x + window_padding * 3, ImGui::GetCursorScreenPos().y);
@@ -1540,6 +1555,30 @@ namespace Slic3r
                             imgui.text(columns_offsets[0].first);
                             for (auto i = 1; i < columns_offsets.size(); i++) {
                                 ImGui::SameLine(columns_offsets[i].second);
+                                //BBS: highlight a value that moved since the previous slice.
+                                // The rect goes into the draw list before the text, so it
+                                // ends up behind it; the arrow is drawn rather than typed so
+                                // it does not depend on the font having arrow glyphs.
+                                const int mark = (marks != nullptr && i < (int) marks->size()) ? (*marks)[i] : 0;
+                                if (mark != 0 && !columns_offsets[i].first.empty()) {
+                                    const ImVec2 p       = ImGui::GetCursorScreenPos();
+                                    const ImVec2 ts      = ImGui::CalcTextSize(columns_offsets[i].first.c_str());
+                                    const float  pad     = 3.0f * m_scale;
+                                    const float  arrow_r = 3.5f * m_scale;
+                                    const ImU32  bg      = (mark > 0) ? IM_COL32(176, 58, 58, 120) : IM_COL32(52, 148, 66, 120);
+                                    const ImU32  fg      = (mark > 0) ? IM_COL32(255, 214, 214, 255) : IM_COL32(214, 255, 214, 255);
+                                    draw_list->AddRectFilled({ p.x - pad, p.y - pad * 0.5f },
+                                                             { p.x + ts.x + pad * 3.0f + arrow_r * 2.0f, p.y + ts.y + pad * 0.5f },
+                                                             bg, 2.0f * m_scale);
+                                    const float ax = p.x + ts.x + pad * 2.0f + arrow_r;
+                                    const float ay = p.y + ts.y * 0.5f;
+                                    if (mark > 0)
+                                        draw_list->AddTriangleFilled({ ax, ay - arrow_r }, { ax - arrow_r, ay + arrow_r },
+                                                                     { ax + arrow_r, ay + arrow_r }, fg);
+                                    else
+                                        draw_list->AddTriangleFilled({ ax, ay + arrow_r }, { ax - arrow_r, ay - arrow_r },
+                                                                     { ax + arrow_r, ay - arrow_r }, fg);
+                                }
                                 imgui.text(columns_offsets[i].first);
                             }
                             if (callback && !checkbox && !visible)
@@ -1823,6 +1862,17 @@ namespace Slic3r
                 std::vector<double> model_used_filaments_g;
                 std::vector<std::string> used_filaments_m;
                 std::vector<std::string> used_filaments_g;
+                //BBS: previous slice of this plate, for the before/after columns.
+                // prev_times holds the same kind of value as times, one row per role,
+                // and role_marks says whether the current row went down (-1) or up (+1).
+                std::vector<std::string> prev_times;
+                std::vector<int>         role_marks;
+                PartPlate::SliceStats    prev_stats;
+                if (wxGetApp().plater() != nullptr) {
+                    if (PartPlate *cur_plate = wxGetApp().plater()->get_partplate_list().get_curr_plate())
+                        prev_stats = cur_plate->get_prev_slice_stats();
+                }
+                const bool show_before_after = prev_stats.valid && prev_stats.total_time > 0.0;
                 double total_model_used_filament_m = 0, total_model_used_filament_g = 0;
                 std::vector<double> flushed_filaments_m;
                 std::vector<double> flushed_filaments_g;
@@ -1922,6 +1972,15 @@ namespace Slic3r
                             labels.push_back(_u8L(ExtrusionEntity::role_to_string(role)));
                             auto [time, percent] = role_time_and_percent(role);
                             times.push_back((time > 0.0f) ? short_time(get_time_dhms(time)) : "");
+                            //BBS: same value from the previous slice, plus which way it moved.
+                            // A second of difference is rounding noise at this display
+                            // resolution, so only a bigger move is marked.
+                            if (show_before_after) {
+                                const double was = prev_stats.time_of_role(static_cast<int>(role));
+                                prev_times.push_back((was > 0.0) ? short_time(get_time_dhms((float) was)) : "");
+                                const double d = double(time) - was;
+                                role_marks.push_back(std::abs(d) < 1.0 ? 0 : (d > 0.0 ? 1 : -1));
+                            }
                             if (percent == 0)
                                 ::sprintf(buffer, "0%%");
                             else
@@ -1948,8 +2007,16 @@ namespace Slic3r
                             percent > 0.001 ? ::sprintf(buffer, "%.1f%%", percent * 100) : ::sprintf(buffer, "<0.1%%");
                         travel_percent = buffer;
                     }
-                    offsets = calculate_offsets({ {_u8L("Line Type"), labels}, {_u8L("Time"), times}, {_u8L("Percent"), percents}, {_u8L("Used filament"), used_filaments_m}, {"", used_filaments_g}, {_u8L("Display"), {""}} }, icon_size);
-                    append_headers({ {_u8L("Line Type"), offsets[0]}, {_u8L("Time"), offsets[1]}, {_u8L("Percent"), offsets[2]}, {_u8L("Used filament"), offsets[3]}, {"", offsets[4]}, {_u8L("Display"), offsets[5]} });
+                    //BBS: with a previous slice to compare against, the time column is
+                    // split in two: what it was, then what it is now.
+                    if (show_before_after) {
+                        offsets = calculate_offsets({ {_u8L("Line Type"), labels}, {_u8L("Before"), prev_times}, {_u8L("After"), times}, {_u8L("Percent"), percents}, {_u8L("Used filament"), used_filaments_m}, {"", used_filaments_g}, {_u8L("Display"), {""}} }, icon_size);
+                        append_headers({ {_u8L("Line Type"), offsets[0]}, {_u8L("Before"), offsets[1]}, {_u8L("After"), offsets[2]}, {_u8L("Percent"), offsets[3]}, {_u8L("Used filament"), offsets[4]}, {"", offsets[5]}, {_u8L("Display"), offsets[6]} });
+                    }
+                    else {
+                        offsets = calculate_offsets({ {_u8L("Line Type"), labels}, {_u8L("Time"), times}, {_u8L("Percent"), percents}, {_u8L("Used filament"), used_filaments_m}, {"", used_filaments_g}, {_u8L("Display"), {""}} }, icon_size);
+                        append_headers({ {_u8L("Line Type"), offsets[0]}, {_u8L("Time"), offsets[1]}, {_u8L("Percent"), offsets[2]}, {_u8L("Used filament"), offsets[3]}, {"", offsets[4]}, {_u8L("Display"), offsets[5]} });
+                    }
                     break;
                 }
                 case EViewType::Height: { imgui.title(_u8L("Layer Height (mm)")); break; }
@@ -2045,22 +2112,69 @@ namespace Slic3r
                 {
                 case EViewType::FeatureType:
                 {
+                    //BBS: master checkbox for the whole list. Checked while every row is
+                    // shown; clicking it then hides all line types and options at once,
+                    // clicking it again brings them all back. Handy to switch everything
+                    // off and re-enable just the one feature you want to look at.
+                    bool all_visible = true;
+                    for (size_t i = 0; i < m_roles.size(); ++i) {
+                        if (m_roles[i] < erCount && !is_extrusion_role_visible(m_roles[i])) {
+                            all_visible = false;
+                            break;
+                        }
+                    }
+                    if (all_visible) {
+                        for (auto item : options_items) {
+                            if (!is_move_type_visible(item)) {
+                                all_visible = false;
+                                break;
+                            }
+                        }
+                    }
+                    {
+                        const Color no_color = { 0.0f, 0.0f, 0.0f, 0.0f };
+                        std::vector<std::pair<std::string, float>> columns_offsets;
+                        columns_offsets.push_back({ _u8L("All"), offsets[0] });
+                        append_item(EItemType::None, no_color, columns_offsets, true, all_visible,
+                            [this, all_visible]() {
+                                const bool show = !all_visible;
+                                for (size_t i = 0; i < m_roles.size(); ++i) {
+                                    if (m_roles[i] < erCount)
+                                        set_extrusion_role_visible(m_roles[i], show);
+                                }
+                                for (auto item : options_items)
+                                    set_move_type_visible(item, show);
+                                on_visibility_changed();
+                            });
+                    }
                     for (size_t i = 0; i < m_roles.size(); ++i) {
                         ExtrusionRole role = m_roles[i];
                         if (role >= erCount)
                             continue;
                         const bool visible = is_extrusion_role_visible(role);
                         std::vector<std::pair<std::string, float>> columns_offsets;
-                        columns_offsets.push_back({ labels[i], offsets[0] });
-                        columns_offsets.push_back({ times[i], offsets[1] });
-                        columns_offsets.push_back({ percents[i], offsets[2] });
-                        columns_offsets.push_back({ used_filaments_m[i], offsets[3] });
-                        columns_offsets.push_back({ used_filaments_g[i], offsets[4] });
+                        std::vector<int> marks;
+                        size_t col = 0;
+                        columns_offsets.push_back({ labels[i], offsets[col++] });
+                        marks.push_back(0);
+                        if (show_before_after && i < prev_times.size()) {
+                            columns_offsets.push_back({ prev_times[i], offsets[col++] });
+                            marks.push_back(0);
+                        }
+                        columns_offsets.push_back({ times[i], offsets[col++] });
+                        // the highlight goes on the current value, which is the one that moved
+                        marks.push_back((show_before_after && i < role_marks.size()) ? role_marks[i] : 0);
+                        columns_offsets.push_back({ percents[i], offsets[col++] });
+                        marks.push_back(0);
+                        columns_offsets.push_back({ used_filaments_m[i], offsets[col++] });
+                        marks.push_back(0);
+                        columns_offsets.push_back({ used_filaments_g[i], offsets[col++] });
+                        marks.push_back(0);
                         append_item(EItemType::Rect, Extrusion_Role_Colors[static_cast<unsigned int>(role)], columns_offsets,
                             true, visible, [this, role, visible]() {
                                 set_extrusion_role_visible(role, !visible);
                                 on_visibility_changed();
-                            });
+                            }, &marks);
                     }
                     for (auto item : options_items) {
                         if (item != EMoveType::Travel) {
@@ -2071,8 +2185,11 @@ namespace Slic3r
                             const bool visible = is_move_type_visible(item);
                             std::vector<std::pair<std::string, float>> columns_offsets;
                             columns_offsets.push_back({ _u8L("Travel"), offsets[0] });
-                            columns_offsets.push_back({ travel_time, offsets[1] });
-                            columns_offsets.push_back({ travel_percent, offsets[2] });
+                            //BBS: skip the "Before" column when it is present, travel has
+                            // no per-role history recorded
+                            const size_t travel_col = show_before_after ? 2 : 1;
+                            columns_offsets.push_back({ travel_time, offsets[travel_col] });
+                            columns_offsets.push_back({ travel_percent, offsets[travel_col + 1] });
                             append_item(EItemType::Rect, Travel_Colors[0], columns_offsets, true, visible, [this, item, visible]() {
                                 set_move_type_visible(item, !visible);
                                 on_visibility_changed();
@@ -2136,6 +2253,27 @@ namespace Slic3r
                     imgui.text(_u8L("Total time") + ":");
                     ImGui::SameLine();
                     imgui.text(short_time(get_time_dhms(time_mode.time)));
+                    //BBS: per-object figures for a plate holding several printable instances
+                    if (printable_objects > 1) {
+                        ImGui::Dummy({ window_padding, window_padding });
+                        ImGui::SameLine();
+                        imgui.text(_u8L("Objects") + ":");
+                        ImGui::SameLine();
+                        ::sprintf(buf, "%d", printable_objects);
+                        imgui.text(buf);
+                        ImGui::Dummy({ window_padding, window_padding });
+                        ImGui::SameLine();
+                        imgui.text(_u8L("Per object") + ":");
+                        ImGui::SameLine();
+                        ::sprintf(buf, imperial_units ? "%.2f in / %.2f oz" : "%.2f m / %.2f g",
+                            ps.total_used_filament / koef / printable_objects, ps.total_weight / unit_conver / printable_objects);
+                        imgui.text(buf);
+                        ImGui::Dummy({ window_padding, window_padding });
+                        ImGui::SameLine();
+                        imgui.text(_u8L("Time per object") + ":");
+                        ImGui::SameLine();
+                        imgui.text(short_time(get_time_dhms(time_mode.time / (float) printable_objects)));
+                    }
                     break;
                 }
                 case EViewType::ColorPrint:
@@ -2628,6 +2766,11 @@ namespace Slic3r
                         prepare_str = _u8L("Prepare time");
                     std::string print_str = _u8L("Model printing time");
                     std::string total_str = _u8L("Total time");
+                    //BBS: per-object breakdown, see printable_objects above
+                    std::string objects_str = _u8L("Objects");
+                    std::string time_per_object_str = _u8L("Time per object");
+                    std::string filament_per_object_str = _u8L("Filament per object");
+                    const bool show_per_object = m_view_type == EViewType::FeatureType && printable_objects > 1;
                     float max_len = window_padding + 2 * ImGui::GetStyle().ItemSpacing.x;
                     if (time_mode.layers_times.empty())
                         max_len += ImGui::CalcTextSize(total_str.c_str()).x;
@@ -2641,6 +2784,11 @@ namespace Slic3r
                             max_len += std::max(ImGui::CalcTextSize(print_str.c_str()).x,
                                 (std::max(ImGui::CalcTextSize(prepare_str.c_str()).x, ImGui::CalcTextSize(total_str.c_str()).x)));
                     }
+                    if (show_per_object)
+                        max_len = std::max(max_len, window_padding + 2 * ImGui::GetStyle().ItemSpacing.x +
+                            std::max(ImGui::CalcTextSize(objects_str.c_str()).x,
+                                std::max(ImGui::CalcTextSize(time_per_object_str.c_str()).x,
+                                    ImGui::CalcTextSize(filament_per_object_str.c_str()).x)));
                     if (m_view_type == EViewType::FeatureType) {
                         //BBS display filament cost
                         ImGui::Dummy({ window_padding, window_padding });
@@ -2699,6 +2847,75 @@ namespace Slic3r
                     imgui.text(total_str + ":");
                     ImGui::SameLine(max_len);
                     imgui.text(short_time(get_time_dhms(time_mode.time)));
+                    //BBS: totals of the previous slice of this plate next to the current
+                    // ones, in the same before / after order as the line type table, with
+                    // the percentage change on the value that moved.
+                    if (m_view_type == EViewType::FeatureType && show_before_after) {
+                        const float  after_col = max_len + ImGui::CalcTextSize("0000h00m00s").x + 3 * ImGui::GetStyle().ItemSpacing.x;
+                        const auto   sign      = [](double v) { return v > 0.0 ? std::string("+") : std::string(); };
+                        const ImVec4 worse     = ImVec4(0.94f, 0.44f, 0.44f, 1.0f);
+                        const ImVec4 better    = ImVec4(0.42f, 0.82f, 0.42f, 1.0f);
+                        char         cbuf[96];
+
+                        ImGui::Dummy({ window_padding, window_padding });
+                        ImGui::SameLine();
+                        imgui.text(_u8L("Before") + " / " + _u8L("After") + ":");
+
+                        const double d_time = time_mode.time - prev_stats.total_time;
+                        const double p_time = 100.0 * d_time / prev_stats.total_time;
+                        ImGui::Dummy({ window_padding, window_padding });
+                        ImGui::SameLine();
+                        imgui.text("  " + total_str + ":");
+                        ImGui::SameLine(max_len);
+                        imgui.text(short_time(get_time_dhms((float) prev_stats.total_time)));
+                        ImGui::SameLine(after_col);
+                        ::sprintf(cbuf, "%s  (%s%.1f %%)", short_time(get_time_dhms(time_mode.time)).c_str(), sign(p_time).c_str(), p_time);
+                        if (std::abs(d_time) < 1.0)
+                            imgui.text(cbuf);
+                        else
+                            imgui.text_colored(d_time > 0.0 ? worse : better, cbuf);
+
+                        if (prev_stats.total_weight > 0.0) {
+                            const double d_w = ps.total_weight - prev_stats.total_weight;
+                            const double p_w = 100.0 * d_w / prev_stats.total_weight;
+                            ImGui::Dummy({ window_padding, window_padding });
+                            ImGui::SameLine();
+                            imgui.text("  " + total_filament_str + ":");
+                            ImGui::SameLine(max_len);
+                            ::sprintf(cbuf, "%.2f g", prev_stats.total_weight / unit_conver);
+                            imgui.text(cbuf);
+                            ImGui::SameLine(after_col);
+                            ::sprintf(cbuf, "%.2f g  (%s%.1f %%)", ps.total_weight / unit_conver, sign(p_w).c_str(), p_w);
+                            if (std::abs(d_w) < 0.01)
+                                imgui.text(cbuf);
+                            else
+                                imgui.text_colored(d_w > 0.0 ? worse : better, cbuf);
+                        }
+                    }
+                    //BBS: per-object figures for a plate holding several printable instances
+                    if (show_per_object) {
+                        char per_obj_buf[64];
+                        ImGui::Dummy({ window_padding, window_padding });
+                        ImGui::SameLine();
+                        imgui.text(objects_str + ":");
+                        ImGui::SameLine(max_len);
+                        ::sprintf(per_obj_buf, "%d", printable_objects);
+                        imgui.text(per_obj_buf);
+                        ImGui::Dummy({ window_padding, window_padding });
+                        ImGui::SameLine();
+                        imgui.text(time_per_object_str + ":");
+                        ImGui::SameLine(max_len);
+                        imgui.text(short_time(get_time_dhms(time_mode.time / (float) printable_objects)));
+                        ImGui::Dummy({ window_padding, window_padding });
+                        ImGui::SameLine();
+                        imgui.text(filament_per_object_str + ":");
+                        ImGui::SameLine(max_len);
+                        ::sprintf(per_obj_buf, imperial_units ? "%.2f in" : "%.2f m", ps.total_used_filament / koef / printable_objects);
+                        imgui.text(per_obj_buf);
+                        ImGui::SameLine();
+                        ::sprintf(per_obj_buf, imperial_units ? "  %.2f oz" : "  %.2f g", ps.total_weight / unit_conver / printable_objects);
+                        imgui.text(per_obj_buf);
+                    }
                     auto show_mode_button = [this, &imgui, can_show_mode_button](const wxString& label, PrintEstimatedStatistics::ETimeMode mode) {
                         if (can_show_mode_button(mode)) {
                             if (imgui.button(label)) {

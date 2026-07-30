@@ -3408,6 +3408,25 @@ void PartPlate::update_states()
 
 /*slice related functions*/
 //invalid sliced result
+void PartPlate::record_slice_stats(const SliceStats &stats)
+{
+    if (!stats.valid)
+        return;
+    // A completed slice can be committed more than once (re-entering preview,
+    // re-processing without a real change). Recording those would make the
+    // comparison read "0 %" against itself, so only roll on a real difference.
+    if (m_last_slice_stats.valid && m_last_slice_stats.total_time == stats.total_time &&
+        m_last_slice_stats.total_weight == stats.total_weight)
+        return;
+
+    m_prev_slice_stats = m_last_slice_stats;
+    m_last_slice_stats = stats;
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__
+                            << boost::format(": plate %1%, time %2%s -> %3%s, weight %4%g -> %5%g") % m_plate_index %
+                                   m_prev_slice_stats.total_time % m_last_slice_stats.total_time %
+                                   m_prev_slice_stats.total_weight % m_last_slice_stats.total_weight;
+}
+
 void PartPlate::update_slice_result_valid_state(bool valid)
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": plate %1% , update slice result from %2% to %3%") % m_plate_index %m_slice_result_valid %valid;
