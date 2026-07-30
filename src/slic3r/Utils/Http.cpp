@@ -395,9 +395,16 @@ void Http::priv::http_perform()
 {
 	// Offline build: nothing but the local network is reachable. Fail the
 	// request here, before curl opens a socket or even resolves the name.
+	//
+	// Do not log from this branch. The log sink holds a non-recursive mutex
+	// while it consumes a record (LogSinkBackend::consume), and log setup
+	// performs an HTTP request while holding it - which is why LogSink.cpp
+	// carries "do not use BOOST_LOG_TRIVIAL in this function to avoid
+	// deadlock" warnings. A log statement here deadlocks the whole app during
+	// instance_check(), before the GUI ever appears. The error message handed
+	// to the caller carries the same information.
 	if (offline_mode_enabled() && !url_is_local(url)) {
 		const std::string host = url_host(url);
-		BOOST_LOG_TRIVIAL(info) << boost::format("offline mode: blocked HTTP request to %1%") % (host.empty() ? url : host);
 		if (errorfn) { errorfn(std::string(), "Offline mode: request to " + (host.empty() ? url : host) + " was blocked", 0); }
 		return;
 	}
