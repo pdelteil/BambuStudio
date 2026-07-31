@@ -135,6 +135,96 @@ filament usage.
 config types. Fields that are unavailable — results on an unsliced plate, for
 example — render as `-`.
 
+The card carries every ironing parameter in its own section: type, pattern,
+flow, spacing, inset, speed, direction and the skip-layer range. Type spans the
+full width because *Iron internal top surfaces only* is wider than one column.
+The values are printed whether or not ironing is enabled — the card documents
+what the plate was sliced with — and `Inset` shows `auto (half nozzle)` when the
+value is 0, which is how `Layer::make_ironing()` treats it.
+
+---
+
+## Compare layer heights
+
+Re-slices the current plate once per layer height and shows the results side by
+side. Reachable from the Slice button's dropdown and from the plate right-click
+menu, both labelled **Compare layer heights**.
+
+The candidate heights come from the nozzle: 0.25 × to 0.75 × nozzle diameter in
+0.04 mm steps, plus the height currently in use. A multi-choice dialog with
+everything preselected lets you trim the list, since each entry is a full slice
+of the plate.
+
+The result is a table: layer height, print time, filament weight and length,
+object count, time per object, and the percentage change against the height the
+plate started on. That row is bold and reads `baseline`. Heights that produced
+no usable slice are greyed out rather than dropped, so it is clear they were
+tried.
+
+It refuses to start when the plate has nothing printable, when a slice is
+already running, or when the process preset has unsaved changes — it edits
+`layer_height` on that preset, which would discard them. The original height is
+restored before the table appears, so the plate ends up sliced with your
+setting.
+
+---
+
+## Before / after comparison of the last two slices
+
+`PartPlate` records the totals and the per-role times of every completed slice,
+so re-slicing shows what changed. In the preview's Line Type legend the time
+column splits into **Before** and **After**, with the value that moved drawn on
+a green background with a down arrow when it dropped and a red one with an up
+arrow when it rose. The arrow is drawn rather than typed, so it does not depend
+on the font carrying arrow glyphs. The totals block below shows the same pair
+plus the percentage change.
+
+Only appears from the second slice of a plate onward, and the history is per
+plate and in memory only — reloading the project starts over. A re-slice that
+produces identical totals does not roll the history, so the comparison keeps
+pointing at the last result that actually differed instead of reading 0 %.
+
+---
+
+## Line Type: show or hide everything
+
+An **All** checkbox at the top of the Line Type legend. Ticked while every row
+is visible; clicking it hides every line type and option row at once, clicking
+again restores them. Two clicks to isolate a single feature.
+
+---
+
+## Arrange without extra plates
+
+**Do not use extra plates** in the arrange settings popup, persisted in
+`app_config` under `arrange/avoid_extra_plates` and off by default.
+
+The arranger still packs into as many beds as it needs; the constraint is
+applied in `ArrangeJob::finalize()` before bed indices become plates. Anything
+placed past the plates that already exist gets `bed_idx = -1`, which is the
+documented "cannot be arranged inside a plate" value:
+`postprocess_bed_index_for_selected()` returns early on it, so `create_plate()`
+never runs, and the item is parked on the virtual plate like an unprintable
+object. Only applies to the multi-plate arrange — arranging a single plate never
+spills.
+
+---
+
+## Smaller fixes
+
+**Delete works while a notification is on screen.** Notifications are ImGui
+windows and were created without `NoFocusOnAppearing`, so the object info
+notification took the keyboard focus as it appeared. That made
+`ImGuiIO::WantCaptureKeyboard` true, `ImGuiWrapper::update_key_data()` reported
+every key as consumed, and `GLCanvas3D::on_char()` returned before its own
+handling — killing every canvas shortcut, Delete included, until the
+notification was dismissed with its X. Fixed by adding `NoFocusOnAppearing` and
+`NoNavFocus` to both notification windows.
+
+**No Helio Additive button in the top bar.** The button is simply not added; the
+other calls referencing `expand_helio_id` look it up by id among the holder's
+children and do nothing when it is absent.
+
 ---
 
 ## Not merged: offline mode

@@ -32,13 +32,31 @@ detail, including the edge cases and the compatibility caveats.
   timelapse blocks from the reported time, applied both to the preview statistics and
   to the estimate written into the G-code header.
 
+### Slicing feedback
+
+- **Compare layer heights** — re-slices the current plate once per layer height and
+  shows a table of print time, filament, time per object and the change against the
+  height you started on. Candidates come from the nozzle diameter; you pick which of
+  them to run. On the Slice button's dropdown and the plate right-click menu.
+- **Before / after comparison** — every completed slice is recorded per plate, so
+  after re-slicing the preview's Line Type legend shows the previous value next to
+  the current one, with whatever moved marked green (down) or red (up), and the same
+  pair plus a percentage on the totals.
+
+### Interface
+
+- **Line Type: All** — one checkbox that hides or restores every row of the Line Type
+  legend, so isolating a single feature takes two clicks.
+- **Arrange without extra plates** — an arrange option that keeps objects on the
+  plates that already exist; anything that does not fit stays on the virtual plate
+  instead of causing new plates to be created.
+- The Helio Additive button is removed from the top bar, and a fix so that Delete (and
+  every other canvas shortcut) keeps working while a notification is on screen.
+
 ### In progress
 
-- [`mods/wip-preview-arrange`](../../tree/mods/wip-preview-arrange) — a before/after
-  slice comparison in the preview legend (per line type and totals, with the changed
-  values highlighted), an *All* master checkbox for the Line Type legend, and an
-  arrange option that keeps objects on the plates that already exist instead of
-  spilling onto new ones. Not compiled yet.
+- [`mods/wip-preview-arrange`](../../tree/mods/wip-preview-arrange) — where the
+  features above live until they have been compiled and tried.
 - [`mods/offline-mode`](../../tree/mods/offline-mode) — keeps the application off the
   public internet: a host gate on every request it makes, a navigation veto on the
   embedded web views, and the startup update / telemetry / sync calls skipped. Partially
