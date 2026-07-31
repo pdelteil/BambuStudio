@@ -2511,6 +2511,13 @@ static LogEncOptions s_get_log_enc_opts()
     enc_options.enc_type = LogEncOptions::LOG_ENC_NONE;
 #endif
 
+    //BBS: this fork keeps local logs readable by their owner. LOG_ENC_NONE makes
+    // LogSinkBackend::consume() take the plaintext text_file_backend path, and the
+    // per-session key is never fetched from v1/analysis-st/tag/, so no unauthenticated
+    // key request leaves the machine either. Logs land in ~/.config/BambuStudio/log
+    // as plain text. Remove these two lines to restore upstream behaviour.
+    enc_options.enc_type = LogEncOptions::LOG_ENC_NONE;
+
     return enc_options;
 };
 

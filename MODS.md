@@ -158,6 +158,25 @@ reason.
 
 ---
 
+## Plain text logs
+
+Upstream encrypts every local log with AES-256-CBC, using a key fetched at startup from
+`v1/analysis-st/tag/` on Bambu's API. The key is per session and is never written to
+disk, so a crash log from yesterday cannot be read by the person whose machine wrote it
+— the documented route is a support ticket
+([bambulab/BambuStudio#10087](https://github.com/bambulab/BambuStudio/issues/10087)).
+
+This fork forces `LogEncOptions::LOG_ENC_NONE` at the end of `s_get_log_enc_opts()`
+(`GUI_App.cpp`). `LogSinkBackend::consume()` then takes the plaintext
+`text_file_backend` path, and because the key is only fetched on the encrypted path, the
+unauthenticated key request is never made either. Logs are written as readable text to
+`~/.config/BambuStudio/log/`.
+
+The upstream `#if BBL_RELEASE_TO_PUBLIC` block is left in place, so reverting is a matter
+of deleting the two added lines.
+
+---
+
 ## Building this fork
 
 ```bash
