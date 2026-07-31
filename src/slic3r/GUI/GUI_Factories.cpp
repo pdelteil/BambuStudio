@@ -1669,10 +1669,10 @@ void MenuFactory::create_plate_menu()
         "", nullptr,
         []() { return !plater()->get_partplate_list().get_selected_plate()->get_objects().empty(); }, m_parent);
 
-    // re-slice this plate at several layer heights and export the comparison
+    // re-slice this plate at several layer heights and show the comparison
     append_menu_item(
-        menu, wxID_ANY, _L("Compare layer heights (PDF)"),
-        _L("Re-slice this plate at each layer height and export a PDF comparing time and filament"),
+        menu, wxID_ANY, _L("Compare layer heights"),
+        _L("Re-slice this plate at each layer height and show a table comparing time and filament"),
         [](wxCommandEvent&) { plater()->compare_layer_heights(); },
         "", nullptr,
         []() { return !plater()->get_partplate_list().get_selected_plate()->get_objects().empty(); }, m_parent);

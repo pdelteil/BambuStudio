@@ -1925,7 +1925,12 @@ wxBoxSizer* MainFrame::create_side_tools()
     /*helio*/
     split_line_icon = new wxStaticBitmap(this, wxID_ANY, create_scaled_bitmap("topbar_line", this, 22), wxDefaultPosition, wxSize(FromDIP(3), FromDIP(22)), 0);
     expand_program_holder = new ExpandButtonHolder(this);
-    expand_program_holder->addExpandButton(expand_helio_id, "helio_icon_topbar");
+    //BBS: the Helio Additive button is not added to the top bar. The other calls
+    // that reference expand_helio_id (show, enable, bitmap, tooltip, and the
+    // re-show from HelioReleaseNote) look the button up by id among the holder's
+    // children and do nothing when it is absent, so this single line removes it.
+    // Re-add the line to bring the icon back.
+    //expand_program_holder->addExpandButton(expand_helio_id, "helio_icon_topbar");
     expand_program_holder->addExpandButton(expand_program_id, "expand_program");
     expand_program_holder->Bind(wxEXPAND_LEFT_DOWN, [=](const wxCommandEvent& e) {
 
@@ -2190,8 +2195,21 @@ wxBoxSizer* MainFrame::create_side_tools()
                     m_slice_option_pop_up->Dismiss();
                 });
 
+            //BBS: re-slice this plate once per layer height and export the comparison.
+            // Unlike the two above it does not set a slice mode: it is a one-off report,
+            // not a state the Slice button should stay in, and each run is several full
+            // slices. Dismiss the popup first, compare_layer_heights() opens dialogs.
+            SideButton* compare_lh_btn = new SideButton(m_slice_option_pop_up, _L("Compare layer heights"), "");
+            compare_lh_btn->SetCornerRadius(0);
+            compare_lh_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+                if (m_slice_option_pop_up)
+                    m_slice_option_pop_up->Dismiss();
+                plater()->compare_layer_heights();
+                });
+
             m_slice_option_pop_up->append_button(slice_all_btn);
             m_slice_option_pop_up->append_button(slice_plate_btn);
+            m_slice_option_pop_up->append_button(compare_lh_btn);
             m_slice_option_pop_up->Popup(m_slice_btn);
         }
     );

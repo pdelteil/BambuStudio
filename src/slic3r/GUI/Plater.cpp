@@ -37,6 +37,7 @@
 #include <wx/statbox.h>
 #include <wx/statbmp.h>
 #include <wx/filedlg.h>
+#include <wx/listctrl.h>
 #include <wx/dnd.h>
 #include <wx/progdlg.h>
 #include <wx/timer.h>
@@ -22071,6 +22072,66 @@ void Plater::priv::advance_layer_height_sweep(bool success, bool cancelled)
     finish_layer_height_sweep(false);
 }
 
+//BBS: show the layer height comparison as a table. Every field is already a
+// formatted string, so this only lays them out. The height the plate started on
+// is shown in bold, heights that produced no usable slice are greyed out.
+static void show_layer_height_sweep_table(wxWindow *parent, const GUI::LayerHeightSweepData &data)
+{
+    const int em = wxGetApp().em_unit();
+    wxDialog  dlg(parent, wxID_ANY, _L("Compare layer heights"), wxDefaultPosition,
+                  wxSize(52 * em, 30 * em), wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER);
+
+    auto *sizer = new wxBoxSizer(wxVERTICAL);
+
+    wxString subtitle = wxString::Format(_L("Plate %d"), data.plate_index);
+    if (!data.process_preset.empty())
+        subtitle += "   " + from_u8(data.process_preset);
+    if (!data.nozzle_diameter.empty())
+        subtitle += "   " + _L("Nozzle") + " " + from_u8(data.nozzle_diameter);
+    sizer->Add(new wxStaticText(&dlg, wxID_ANY, subtitle), 0, wxALL, em);
+
+    auto *list = new wxListCtrl(&dlg, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+                                wxLC_REPORT | wxLC_SINGLE_SEL | wxBORDER_SIMPLE);
+    const struct { wxString title; int width_em; } cols[] = {
+        { _L("Layer height"),    9 }, { _L("Print time"),     9 }, { _L("Filament"),  8 },
+        { _L("Length"),          8 }, { _L("Objects"),        6 }, { _L("Per object"), 9 },
+        { _L("vs current"),      8 },
+    };
+    for (int i = 0; i < (int) (sizeof(cols) / sizeof(cols[0])); ++i)
+        list->AppendColumn(cols[i].title, wxLIST_FORMAT_LEFT, cols[i].width_em * em);
+
+    const auto dash = [](const std::string &s) { return s.empty() ? std::string("-") : s; };
+    long idx = 0;
+    for (const GUI::LayerHeightSweepRow &r : data.rows) {
+        list->InsertItem(idx, from_u8(dash(r.layer_height)));
+        list->SetItem(idx, 1, from_u8(dash(r.print_time)));
+        list->SetItem(idx, 2, from_u8(dash(r.filament_grams)));
+        list->SetItem(idx, 3, from_u8(dash(r.filament_length)));
+        list->SetItem(idx, 4, from_u8(dash(r.objects)));
+        list->SetItem(idx, 5, from_u8(dash(r.time_per_object)));
+        list->SetItem(idx, 6, from_u8(r.failed ? std::string("-") : dash(r.delta_vs_current)));
+        if (r.is_current) {
+            wxFont f = list->GetItemFont(idx);
+            f.MakeBold();
+            list->SetItemFont(idx, f);
+        }
+        if (r.failed)
+            list->SetItemTextColour(idx, wxColour(150, 150, 150));
+        ++idx;
+    }
+    sizer->Add(list, 1, wxEXPAND | wxLEFT | wxRIGHT, em);
+
+    sizer->Add(new wxStaticText(&dlg, wxID_ANY,
+                                _L("The plate has been sliced again at its original layer height.")),
+               0, wxALL, em);
+    if (wxSizer *btns = dlg.CreateButtonSizer(wxOK))
+        sizer->Add(btns, 0, wxEXPAND | wxALL, em);
+
+    dlg.SetSizer(sizer);
+    dlg.Layout();
+    dlg.ShowModal();
+}
+
 void Plater::priv::finish_layer_height_sweep(bool cancelled)
 {
     std::vector<GUI::LayerHeightSweepRow> rows = m_lh_sweep.rows;
@@ -22119,33 +22180,13 @@ void Plater::priv::finish_layer_height_sweep(bool cancelled)
     data.plate_index = plate_idx + 1;
     data.rows        = rows;
 
-    const std::string tmp_png = dump_plate_thumbnail_png(partplate_list.get_curr_plate(), "layer_height_sweep_thumb");
-    data.thumbnail_path = tmp_png;
-
-    // Restore the original layer height before the (modal) save dialog, so the
-    // project is never left on a height the user did not choose.
+    // Restore the original layer height before showing the (modal) table, so the
+    // project is never left on a height the user did not choose, and the plate is
+    // sliced with it again by the time they close the dialog.
     m_lh_sweep.restoring = true;
     apply_sweep_layer_height(original_h);
 
-    std::string base = data.title.empty() ? std::string("layer_heights") : data.title;
-    for (char &ch : base) if (ch == '/' || ch == '\\' || ch == ':') ch = '_';
-    const wxString default_name = from_u8(base + "_plate" + std::to_string(data.plate_index) + "_layer_heights.pdf");
-    wxFileDialog dlg(q, _L("Export layer height comparison"),
-                     from_u8(wxGetApp().app_config->get_last_dir()), default_name,
-                     "PDF files (*.pdf)|*.pdf", wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
-    if (dlg.ShowModal() != wxID_OK) {
-        if (!tmp_png.empty()) { boost::system::error_code ec; boost::filesystem::remove(tmp_png, ec); }
-        return;
-    }
-    const std::string out_path = into_u8(dlg.GetPath());
-    const bool ok = GUI::build_layer_height_sweep_pdf(out_path, data);
-    if (!tmp_png.empty()) { boost::system::error_code ec; boost::filesystem::remove(tmp_png, ec); }
-
-    if (ok)
-        wxGetApp().app_config->update_skein_dir(into_u8(dlg.GetDirectory()));
-    else
-        MessageDialog(q, _L("Failed to export the layer height comparison PDF."),
-                      _L("Compare layer heights"), wxOK | wxICON_ERROR).ShowModal();
+    show_layer_height_sweep_table(q, data);
 }
 
 Preset *get_printer_preset(const MachineObject *obj)

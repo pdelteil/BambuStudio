@@ -285,7 +285,13 @@ void NotificationManager::PopNotification::render(GLCanvas3D& canvas, float init
 
     use_bbl_theme();
 
-	int window_flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+	//BBS: NoFocusOnAppearing/NoNavFocus keep a notification from taking the ImGui
+	// keyboard focus when it pops up. Without them ImGuiIO::WantCaptureKeyboard goes
+	// true, ImGuiWrapper::update_key_data() then reports the key as consumed, and
+	// GLCanvas3D::on_char() returns before its own handling - so Delete stopped
+	// deleting the selected object while the object info notification was on screen.
+	int window_flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse
+		| ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNavFocus;
 	if (imgui.begin(name, window_flags)) {
 		ImVec2 win_size = ImGui::GetWindowSize();
 
@@ -375,7 +381,9 @@ void NotificationManager::PopNotification::bbl_render_block_notification(GLCanva
     }
 	push_style_color(ImGuiCol_Text, { 1,1,1,1 }, true, m_current_fade_opacity);
 
-	if (imgui.begin(name, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+	//BBS: see the note above - a notification must not steal the keyboard focus.
+	if (imgui.begin(name, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse
+		| ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNavFocus)) {
 		ImVec2 win_size = ImGui::GetWindowSize();
 		ImVec2 win_pos = ImGui::GetWindowPos();
 		if (ImGui::IsMouseHoveringRect(win_pos, win_pos + win_size)) {
