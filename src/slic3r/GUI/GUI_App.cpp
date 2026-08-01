@@ -3806,6 +3806,17 @@ void GUI_App::init_label_colours()
 #endif
     m_color_window_default          = is_dark_mode ? wxColour(43, 43, 43)   : wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW);
     StateColor::SetDarkMode(is_dark_mode);
+
+    //BBS: user picked accent colour, replaces the stock green everywhere the
+    // colour is resolved through StateColor. Empty or unparsable means stock.
+    if (app_config != nullptr) {
+        const std::string accent = app_config->get("accent_color");
+        wxColour          c;
+        if (!accent.empty() && c.Set(from_u8(accent)))
+            StateColor::SetAccentColor(c);
+        else
+            StateColor::SetAccentColor(wxColour());
+    }
 }
 
 void GUI_App::update_label_colours_from_appconfig()

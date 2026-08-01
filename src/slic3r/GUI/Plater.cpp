@@ -21931,32 +21931,53 @@ void Plater::compare_layer_heights()
     const DynamicPrintConfig &config = wxGetApp().preset_bundle->prints.get_edited_preset().config;
     const double current_h = config.option("layer_height") ? config.opt_float("layer_height") : 0.2;
 
-    const DynamicPrintConfig &full = wxGetApp().preset_bundle->full_config();
-    const double nozzle = full.option("nozzle_diameter") ? full.opt_float("nozzle_diameter", 0) : 0.4;
+    // Candidates are the layer heights of the process presets that apply to this
+    // printer, so the list matches what the preset dropdown offers. A synthetic
+    // ladder was used here before and silently missed preset heights that are not
+    // multiples of 0.04 mm, 0.08 mm "Extra Fine" among them.
+    std::vector<double>      candidates;
+    std::vector<std::string> candidate_presets;   // first preset seen at that height
+    const auto add_candidate = [&candidates, &candidate_presets](double h, const std::string &preset_name) {
+        if (h <= 0.0)
+            return;
+        for (double have : candidates)
+            if (std::abs(have - h) < 1e-6)
+                return;
+        candidates.push_back(h);
+        candidate_presets.push_back(preset_name);
+    };
 
-    // Candidate ladder, bounded by what the nozzle can actually lay down.
-    const double lo = 0.25 * nozzle, hi = 0.75 * nozzle;
-    std::vector<double> candidates;
-    for (int i = 1; i <= 40; ++i) {
-        const double h = 0.04 * i;
-        if (h >= lo - 1e-6 && h <= hi + 1e-6)
-            candidates.push_back(h);
+    for (const Preset &preset : wxGetApp().preset_bundle->prints.get_presets()) {
+        if (preset.is_default || !preset.is_visible || !preset.is_compatible)
+            continue;
+        if (const ConfigOption *opt = preset.config.option("layer_height"))
+            add_candidate(opt->getFloat(), preset.name);
     }
-    if (std::none_of(candidates.begin(), candidates.end(),
-                     [current_h](double h) { return std::abs(h - current_h) < 1e-6; }))
-        candidates.push_back(current_h);
-    std::sort(candidates.begin(), candidates.end());
+    add_candidate(current_h, std::string());
+    // sort heights, keeping each one's preset name alongside
+    {
+        std::vector<size_t> order(candidates.size());
+        std::iota(order.begin(), order.end(), 0);
+        std::sort(order.begin(), order.end(), [&candidates](size_t a, size_t b) { return candidates[a] < candidates[b]; });
+        std::vector<double>      sorted_h;
+        std::vector<std::string> sorted_p;
+        for (size_t i : order) { sorted_h.push_back(candidates[i]); sorted_p.push_back(candidate_presets[i]); }
+        candidates        = std::move(sorted_h);
+        candidate_presets = std::move(sorted_p);
+    }
     if (candidates.empty()) {
-        MessageDialog(this, _L("No usable layer heights for this nozzle."), caption,
+        MessageDialog(this, _L("No layer heights found in the process presets for this printer."), caption,
                       wxOK | wxICON_INFORMATION).ShowModal();
         return;
     }
 
     // --- Let the user trim the list: each entry is a full slice ---------------
     wxArrayString labels;
-    for (double h : candidates) {
-        wxString s = wxString::Format("%.2f mm", h);
-        if (std::abs(h - current_h) < 1e-6)
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        wxString s = wxString::Format("%.2f mm", candidates[i]);
+        if (!candidate_presets[i].empty())
+            s += "   " + from_u8(candidate_presets[i]);
+        if (std::abs(candidates[i] - current_h) < 1e-6)
             s += _L("  (current)");
         labels.Add(s);
     }

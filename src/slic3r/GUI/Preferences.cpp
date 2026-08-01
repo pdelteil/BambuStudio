@@ -1,4 +1,5 @@
 #include "Preferences.hpp"
+#include <wx/clrpicker.h>
 #include "OptionsGroup.hpp"
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
@@ -1370,6 +1371,39 @@ wxWindow *PreferencesDialog::create_general_tab()
     auto item_darkmode = create_item_darkmode_checkbox(_L("Enable dark mode"), scrolled, _L("Enable dark mode"), 50, "dark_color_mode");
 #endif
 
+    //BBS: accent colour. One picker; the hover and pressed shades are derived from
+    // it, and it is stored as HTML hex so it survives a restart. StateColor applies
+    // it wherever the stock green is resolved through it.
+    auto item_accent = new wxBoxSizer(wxHORIZONTAL);
+    {
+        item_accent->SetMinSize(wxSize(-1, FromDIP(ITEM_MIN_HEIGHT)));
+        const wxString accent_title = _L("Accent color");
+        auto title = new wxStaticText(scrolled, wxID_ANY, accent_title, wxDefaultPosition, wxDefaultSize, 0);
+        title->SetForegroundColour(ThemeColor::TextPrimary);
+        title->SetFont(::Label::Body_13);
+        title->SetMinSize(wxSize(title->GetTextExtent(accent_title).x + FromDIP(5), -1));
+
+        const wxColour current = StateColor::HasAccentColor() ? StateColor::GetAccentColor() : ThemeColor::BrandGreen;
+        auto picker = new wxColourPickerCtrl(scrolled, wxID_ANY, current);
+        picker->SetToolTip(_L("Color of buttons, selected borders and focus rings. "
+                              "Pick the stock green #00AE42 to go back. Restart to apply it everywhere."));
+        picker->Bind(wxEVT_COLOURPICKER_CHANGED, [this](wxColourPickerEvent &evt) {
+            const wxColour c = evt.GetColour();
+            if (c == ThemeColor::BrandGreen) {
+                StateColor::SetAccentColor(wxColour());
+                app_config->set("accent_color", "");
+            } else {
+                StateColor::SetAccentColor(c);
+                app_config->set("accent_color", into_u8(c.GetAsString(wxC2S_HTML_SYNTAX)));
+            }
+            Refresh();
+        });
+
+        item_accent->AddSpacer(FromDIP(ITEM_LEFT_PADDING));
+        item_accent->Add(title, wxSizerFlags().CenterVertical().Proportion(1));
+        item_accent->Add(picker, wxSizerFlags().CenterVertical().Border(wxRIGHT, FromDIP(ITEM_RIGHT_PADDING)));
+    }
+
     std::vector<wxString>    FlushOptionLabels = {_L("All"), _L("Color change"), _L("Disabled")};
     std::vector<std::string> FlushOptionValues = {"all", "color change", "disabled"};
     auto item_auto_flush = create_item_combobox(_L("Auto Flush"), scrolled, _L("Auto calculate flush volumes"), "auto_calculate_flush", FlushOptionLabels, FlushOptionValues);
@@ -1426,6 +1460,7 @@ wxWindow *PreferencesDialog::create_general_tab()
     sizer->Add(item_region, flags);
     sizer->Add(item_currency, flags);
     sizer->Add(item_auto_flush, flags);
+    sizer->Add(item_accent, flags);
 #ifdef _WIN32
     sizer->Add(item_darkmode, flags);
 #endif

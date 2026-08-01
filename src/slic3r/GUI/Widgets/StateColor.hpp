@@ -74,6 +74,15 @@ public:
 public:
     static void SetDarkMode(bool dark);
 
+    // Accent colour. Replaces ThemeColor::BrandGreen and its hover/pressed
+    // variants everywhere they are resolved through this class, which covers the
+    // buttons, selected borders and focus rings. An invalid colour restores the
+    // stock green. The hover and pressed shades are derived from the accent, so
+    // callers only pick one colour.
+    static void     SetAccentColor(wxColour const &color);
+    static wxColour GetAccentColor();
+    static bool     HasAccentColor();
+
     static std::map<wxColour, wxColour> const & GetDarkMap();
     static wxColour darkModeColorFor(wxColour const &color);
     static wxColour lightModeColorFor(wxColour const &color);

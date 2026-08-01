@@ -86,12 +86,8 @@ struct LayerHeightSweepData
     std::string filament_preset;
     std::string nozzle_diameter;
     int         plate_index = 1;
-    std::string thumbnail_path;
     std::vector<LayerHeightSweepRow> rows;
 };
-
-// Render a single-page A4 PDF layer-height comparison table to pdf_path.
-bool build_layer_height_sweep_pdf(const std::string &pdf_path, const LayerHeightSweepData &data);
 
 }} // namespace Slic3r::GUI
 

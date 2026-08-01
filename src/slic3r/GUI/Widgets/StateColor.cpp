@@ -57,8 +57,59 @@ std::map<wxColour, wxColour> const & StateColor::GetDarkMap()
 
 void StateColor::SetDarkMode(bool dark) { gDarkMode = dark; }
 
+// Accent colour support. gAccent replaces ThemeColor::BrandGreen; the hover and
+// pressed shades are derived from it so the user only picks one colour.
+static wxColour gAccent;
+static wxColour gAccentHovered;
+static wxColour gAccentPressed;
+
+// Move a channel towards white (t > 0) or black (t < 0).
+static unsigned char shade_channel(unsigned char v, double t)
+{
+    const double target = t > 0 ? 255.0 : 0.0;
+    const double f      = t > 0 ? t : -t;
+    return static_cast<unsigned char>(v + (target - v) * f + 0.5);
+}
+
+static wxColour shade(wxColour const &c, double t)
+{
+    return wxColour(shade_channel(c.Red(), t), shade_channel(c.Green(), t), shade_channel(c.Blue(), t), c.Alpha());
+}
+
+void StateColor::SetAccentColor(wxColour const &color)
+{
+    if (!color.IsOk()) {
+        gAccent = gAccentHovered = gAccentPressed = wxColour();
+        return;
+    }
+    gAccent = color;
+    // Same relationship the stock palette has: hover is lighter, pressed darker.
+    gAccentHovered = shade(color, 0.24);
+    gAccentPressed = shade(color, -0.22);
+}
+
+wxColour StateColor::GetAccentColor() { return gAccent; }
+bool     StateColor::HasAccentColor() { return gAccent.IsOk(); }
+
+// Substitute the accent before anything else, in both light and dark mode: the
+// accent is the user's choice and should not be remapped by the dark palette.
+inline wxColour accentColorFor(wxColour const &color)
+{
+    if (!gAccent.IsOk())
+        return color;
+    if (color == ThemeColor::BrandGreen) return gAccent;
+    if (color == ThemeColor::BrandGreenHovered) return gAccentHovered;
+    if (color == ThemeColor::BrandGreenPressed) return gAccentPressed;
+    return color;
+}
+
 inline wxColour darkModeColorFor2(wxColour const &color)
 {
+    if (gAccent.IsOk()) {
+        const wxColour accented = accentColorFor(color);
+        if (accented != color)
+            return accented;
+    }
     if (!gDarkMode)
         return color;
     auto iter = gDarkColors.find(color);
