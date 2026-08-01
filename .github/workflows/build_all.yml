@@ -4,6 +4,7 @@ on:
   push:
     branches:
      - master
+     - 'release/*-plaintext-logs'
     paths:
      - 'deps/**'
      - 'src/**'
