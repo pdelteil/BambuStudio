@@ -2485,6 +2485,20 @@ static LogEncOptions s_get_log_enc_opts()
     enc_options.enc_type = LogEncOptions::LOG_ENC_NONE;
 #endif
 
+    // Keep local logs readable by the person whose machine wrote them.
+    //
+    // Upstream encrypts every local log with AES-256-CBC under a key fetched at
+    // startup from v1/analysis-st/tag/. The key is per session and is never stored,
+    // so a log written before the user began capturing their own traffic cannot be
+    // decrypted locally at all - see bambulab/BambuStudio#10087, where the documented
+    // way to read your own crash log is to open a support ticket.
+    //
+    // LOG_ENC_NONE makes LogSinkBackend::consume() take the plaintext
+    // text_file_backend path. The key is only requested on the encrypted path, so this
+    // also stops the unauthenticated key request at every launch. Delete this line to
+    // restore upstream behaviour.
+    enc_options.enc_type = LogEncOptions::LOG_ENC_NONE;
+
     return enc_options;
 };
 
