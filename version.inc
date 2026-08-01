@@ -13,15 +13,16 @@ endif()
 
 # The build_version should start from 50 in master branch
 #
-# Fork versioning: the first three fields track the upstream release this fork
-# is based on, so profiles and preset compatibility checks keep working. The
-# fourth field is the fork build number, starting at 90 to stay clear of the
-# upstream range. Bump it for each build worth telling apart.
+# Fork versioning: this fork uses its own sequence starting at 00.00.00.01, so a
+# build is never mistaken for an upstream release. Note that PresetUpdater derives
+# the profile-sync version as SLIC3R_VERSION.substr(0,6) + "00.00", so this asks
+# the server for settings version 00.00.00.00 and system profile updates will not
+# resolve. Local presets and slicing are unaffected.
 # The format is fixed at four numeric fields: it is comma-separated for the
 # Windows resource block and parsed by the preset compatibility and update
 # checks, so a suffix like "-fork" cannot be added here.
 
-set(SLIC3R_VERSION "02.08.01.90")
+set(SLIC3R_VERSION "00.00.00.01")
 
 string(REPLACE "." "," SLIC3R_COMMA_SEPARATED_VERSION ${SLIC3R_VERSION})
 set(SLIC3R_COMMA_SEPARATED_VERSION "${SLIC3R_COMMA_SEPARATED_VERSION}")
