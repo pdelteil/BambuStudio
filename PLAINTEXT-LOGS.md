@@ -7,6 +7,20 @@ Nothing else is different. No features added, no behaviour changed, no telemetry
 removed beyond the one request described below. The diff against the upstream release
 tag is one source file.
 
+## What this is not
+
+This is an **unofficial build**. It is not produced, endorsed or supported by Bambu Lab.
+Do not report problems with it to Bambu support — reproduce them on an official build
+first. Bambu Studio is AGPL-3.0; this fork carries the same licence.
+
+It also does not remove telemetry or network activity in general. One request disappears
+as a side effect (the log encryption key fetch); everything else the application does is
+unchanged.
+
+Note that `debug_network_*.log.enc` stays encrypted. That log is written by the
+closed-source `libbambu_networking` plugin, not by the application's own log sink, so
+this change does not reach it. Application logs — `studio_*.log` — are plain text.
+
 ## Why
 
 Upstream encrypts every local log with AES-256-CBC. The key is fetched at startup from
